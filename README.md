@@ -8,7 +8,6 @@
   <img src="https://img.shields.io/badge/Vue-3-brightgreen?logo=vue.js" />
   <img src="https://img.shields.io/badge/Milvus-2.x-blue" />
   <img src="https://img.shields.io/badge/LangGraph-latest-orange" />
-  <img src="https://img.shields.io/badge/License-MIT-yellow" />
 </p>
 
 
