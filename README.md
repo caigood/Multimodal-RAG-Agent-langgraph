@@ -176,7 +176,3 @@ graph LR
 </details>
 
 ---
-
-## License
-
-MIT © 2026 cwl
