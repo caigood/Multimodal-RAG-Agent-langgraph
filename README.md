@@ -1,4 +1,4 @@
-# 🧠 Knowledge Base RAG System
+# 🧠 Multimodal-RAG-Agent-langgraph
 
 > 基于 LangGraph + Milvus 的企业级知识库问答系统，支持多轮对话、混合检索、Rerank、图文解析、Excel 结构化切分。
 
