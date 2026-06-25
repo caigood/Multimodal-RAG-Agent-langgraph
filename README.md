@@ -1,4 +1,4 @@
-# 🧠 Knowledge Base RAG System
+# 🧠 Knowledge Base RAG System 智能 RAG Agent 
 
 > 基于 LangGraph + Milvus + Neo4j 的企业级知识库问答系统，支持多轮对话、混合检索、Rerank、知识图谱、图文解析、Excel 结构化切分，以及 Supervisor 多智能体协作。
 
