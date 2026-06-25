@@ -29,7 +29,7 @@ def create_email_agent(model):
     
     # Define model caller
     def model_caller(state: EmailAgentState):
-        return call_email_model(state, model)
+        return call_email_model(state, model, email_tools)
     
     # Build graph
     builder = StateGraph(EmailAgentState)

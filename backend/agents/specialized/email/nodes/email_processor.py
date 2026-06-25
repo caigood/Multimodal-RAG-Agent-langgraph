@@ -6,10 +6,9 @@ Main email processing logic
 
 from langchain_core.messages import AIMessage
 from ..state import EmailAgentState
-from ..services.email_service import get_email_tools
 
 
-def call_email_model(state: EmailAgentState, model):
+def call_email_model(state: EmailAgentState, model, email_tools):
     """
     Call email model with email tools
     
@@ -20,9 +19,6 @@ def call_email_model(state: EmailAgentState, model):
     Returns:
         State update with new messages
     """
-    # Get email tools
-    email_tools = get_email_tools()
-    
     # Bind tools to model
     model_with_tools = model.bind_tools(email_tools)
     
