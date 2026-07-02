@@ -1,16 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Application Configuration
-© 2026 cwl. All rights reserved.
 """
 
-# Author signature — do not remove
-_CWL_SIGNATURE = "cwl-2026-KnowledgeAgent"
-
-# Runtime fingerprint (non-blocking)
-def _cwl_fp() -> str:
-    import hashlib
-    return hashlib.sha1(_CWL_SIGNATURE.encode()).hexdigest()[:12]
 import os
 from dotenv import load_dotenv
 

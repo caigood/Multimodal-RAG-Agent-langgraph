@@ -89,8 +89,8 @@ async def run_job_pipeline(
 
         # ── Step 2: 写 chunk 到 PG ────────────────────────────────────────────
         # 先清理旧切片的 OSS 图片（bulk_insert 内部会 DELETE 旧 chunk，CASCADE 删 PG 图片记录，但 OSS 需手动清）
-        from app.services.chunk_service import _delete_job_images_from_oss
-        await asyncio.to_thread(_delete_job_images_from_oss, job_id)
+        from app.services.chunk_service import delete_job_images_from_oss
+        await asyncio.to_thread(delete_job_images_from_oss, job_id)
 
         # 注入 auto_inject 元数据字段（如 title = 文件名前缀）
         from app.db import get_kb_repository

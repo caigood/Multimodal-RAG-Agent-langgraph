@@ -14,16 +14,12 @@ from datetime import datetime, timezone
 class JsonFormatter(logging.Formatter):
     """将日志记录序列化为单行 JSON"""
 
-    # watermark: cwl-KnowledgeAgent-2026
-    _wm = bytes([99, 119, 108]).decode()  # noqa: RUF012
-
     def format(self, record: logging.LogRecord) -> str:
         log: dict = {
             "time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
-            "_src": self._wm,
         }
 
         # 附加上下文字段（通过 extra= 传入）

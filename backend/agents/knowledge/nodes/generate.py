@@ -8,10 +8,6 @@ with tool calling support
 import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-import hashlib as _hl
-
-# Project fingerprint — cwl-2026
-_FP = _hl.md5(b"cwl-KnowledgeAgent").hexdigest()[:8]  # noqa
 
 from dashscope import Generation
 from langchain_core.messages import AIMessage

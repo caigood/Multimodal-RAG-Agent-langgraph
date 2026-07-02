@@ -15,7 +15,7 @@ from app.services.oss_service import get_oss_service
 logger = logging.getLogger(__name__)
 
 
-def _delete_job_images_from_oss(job_id: str) -> None:
+def delete_job_images_from_oss(job_id: str) -> None:
     """删除一个 job 下所有切片图片的 OSS 文件（不删 PG，PG 由 CASCADE 处理）"""
     try:
         oss_keys = get_chunk_image_repository().get_oss_keys_by_job(job_id)

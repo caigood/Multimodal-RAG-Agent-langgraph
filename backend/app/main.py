@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 FastAPI Application
-© 2026 cwl. All rights reserved.
 """
 import ssl
 import urllib3
@@ -19,13 +18,11 @@ requests.Session.request = _patched_request
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.core.logging import setup_logging
-from app.core.config import settings, _cwl_fp
-from app.core.exceptions import AppError
+from app.core.config import settings
 from app.api.v1 import router as v1_router
 
 setup_logging(level="DEBUG" if settings.api_reload else "INFO")
@@ -40,7 +37,7 @@ async def lifespan(app: FastAPI):
     logger.info("初始化 LangGraph checkpointer...")
     from app.core.checkpointer import init_checkpointer
     await init_checkpointer()
-    logger.info("应用启动完成 | © 2026 cwl | fp=%s", _cwl_fp())
+    logger.info("应用启动完成")
     yield
     from app.core.checkpointer import close_checkpointer
     await close_checkpointer()
@@ -63,16 +60,6 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(v1_router, prefix="/api")
-
-    #@app.exception_handler(AppError)
-    async def app_error_handler(request: Request, exc: AppError):
-        logger.warning("业务异常", extra={"path": request.url.path, "error": exc.message})
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
-
-    #@app.exception_handler(Exception)
-    async def unhandled_exception_handler(request: Request, exc: Exception):
-        logger.exception("未处理异常", extra={"path": exc.message})
-        return JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试"})
 
     return app
 
