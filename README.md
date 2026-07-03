@@ -1,4 +1,4 @@
-# 🧠 Knowledge Base RAG System 智能 RAG Agent 
+# 🧠 Knowledge Base RAG System 智能 RAG Agent
 
 > 基于 LangGraph + Milvus + Neo4j 的企业级知识库问答系统，支持多轮对话、混合检索、Rerank、知识图谱、图文解析、Excel 结构化切分，以及 Supervisor 多智能体协作。
 
@@ -56,7 +56,7 @@ cp .env.example .env
 | `OSS_BUCKET` | OSS Bucket 名称 |
 | `PG_HOST` / `PG_USER` / `PG_PASSWORD` | PostgreSQL 连接信息 |
 | `TAVILY_API_KEY` | Tavily 联网搜索 API Key（Search Agent 使用） |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | 系统统一 SMTP 发件邮箱配置（Email Agent 使用） |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | 系统统一 SMTP 发件邮箱配置（Email Agent 使用，可选） |
 
 > 邮件发送使用系统统一发件邮箱，`SMTP_PASSWORD` 应填写邮箱 SMTP 授权码，不要填写网页登录密码。
 
@@ -111,9 +111,12 @@ graph TD
     B --> E[本地知识库问答\nMilvus + Neo4j]
     C --> F[SMTP 邮件发送\n总结/报告/问答结果外发]
     D --> G[Tavily 联网搜索\n实时信息/新闻/天气]
-    D --> A
-    A --> C
+    E --> A
+    F --> A
+    G --> A
 ```
+
+> Supervisor 将 Knowledge / Search / Email 子智能体包装为工具进行调用；子智能体执行完成后，结果会返回 Supervisor，由 Supervisor 继续推理、综合结果或生成最终回复。
 
 ---
 
@@ -122,7 +125,7 @@ graph TD
 | 层 | 技术 |
 |----|------|
 | 后端框架 | FastAPI + Uvicorn |
-| Agent 编排 | LangGraph（StateGraph + AsyncPostgresSaver） |
+| Agent 编排 | LangGraph（StateGraph + ToolNode + MemorySaver） |
 | LLM / Embedding / Rerank | 阿里云 DashScope（Qwen 系列） |
 | 向量数据库 | Milvus Standalone |
 | 图数据库 | Neo4j 5.x Community |
