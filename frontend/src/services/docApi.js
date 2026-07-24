@@ -1,96 +1,65 @@
-import axios from 'axios'
-
-const BASE = 'http://localhost:8000/api/v1'
+import { api } from './api'
 
 export const docApi = {
-  // ── 文档 ──────────────────────────────────────────────────────────────────
-  uploadDocument: (formData) => axios.post(`${BASE}/documents/upload`, formData),
-  uploadDocumentToCategory: (formData) => axios.post(`${BASE}/documents/upload-to-category`, formData),
-  batchUploadToCategory: (formData) => axios.post(`${BASE}/documents/batch-upload-to-category`, formData),
-  searchDocuments: (formData) => axios.post(`${BASE}/documents/search`, formData),
-  startChunking: (categoryId, params = {}) =>
-    axios.post(`${BASE}/documents/start-chunking/${categoryId}`, null, { params }),
-  getExcelColumns: (categoryFileId) =>
-    axios.get(`${BASE}/documents/excel-columns`, { params: { category_file_id: categoryFileId } }),
-  startChunkingExcel: (categoryId, params = {}) =>
-    axios.post(`${BASE}/documents/start-chunking-excel/${categoryId}`, null, { params }),
+  uploadDocument: (formData) => api.post('/documents/upload', formData),
+  uploadDocumentToCategory: (formData) => api.post('/documents/upload-to-category', formData),
+  batchUploadToCategory: (formData) => api.post('/documents/batch-upload-to-category', formData),
+  searchDocuments: (formData) => api.post('/documents/search', formData),
+  startChunking: (categoryId, params = {}) => api.post(`/documents/start-chunking/${categoryId}`, null, { params }),
+  getExcelColumns: (categoryFileId) => api.get('/documents/excel-columns', { params: { category_file_id: categoryFileId } }),
+  startChunkingExcel: (categoryId, params = {}) => api.post(`/documents/start-chunking-excel/${categoryId}`, null, { params }),
 
-  // ── Job ───────────────────────────────────────────────────────────────────
-  listJobs: (kbName, limit = 200) => axios.get(`${BASE}/jobs`, { params: { kb_name: kbName, limit } }),
-  getJob: (jobId) => axios.get(`${BASE}/jobs/${encodeURIComponent(jobId)}`),
-  upsertJob: (jobId) => axios.post(`${BASE}/jobs/${encodeURIComponent(jobId)}/upsert`),
+  listJobs: (kbName, limit = 200) => api.get('/jobs', { params: { kb_name: kbName, limit } }),
+  getJob: (jobId) => api.get(`/jobs/${encodeURIComponent(jobId)}`),
+  upsertJob: (jobId) => api.post(`/jobs/${encodeURIComponent(jobId)}/upsert`),
 
-  // ── 切片 ──────────────────────────────────────────────────────────────────
-  getChunksByJob: (jobId) => axios.get(`${BASE}/chunks/job/${encodeURIComponent(jobId)}`),
-  // 单个切片操作：用 job_id + chunk_index 定位
-  editChunk: (jobId, chunkIndex, content) =>
-    axios.put(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}`, { content }),
+  getChunksByJob: (jobId) => api.get(`/chunks/job/${encodeURIComponent(jobId)}`),
+  editChunk: (jobId, chunkIndex, content) => api.put(`/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}`, { content }),
   cleanChunk: (jobId, chunkIndex, instruction) => {
     const fd = new FormData()
     if (instruction) fd.append('instruction', instruction)
-    return axios.post(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/clean`, fd)
+    return api.post(`/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/clean`, fd)
   },
-  revertChunk: (jobId, chunkIndex) =>
-    axios.post(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/revert`),
-  // 批量操作：按 job_id
-  cleanJobChunks: (jobId, instruction) => axios.post(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/clean`, { instruction }),
-  revertJobChunks: (jobId) => axios.post(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/revert`),
-  cleanAllChunks: (instruction) => axios.post(`${BASE}/chunks/clean-all`, { instruction }),
-  revertAllChunks: () => axios.post(`${BASE}/chunks/revert-all`),
-  upsertJobChunks: (jobId) => axios.post(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/upsert`),
-  batchUpsertJobs: (jobIds) => axios.post(`${BASE}/chunks/batch-upsert`, { job_ids: jobIds }),
+  revertChunk: (jobId, chunkIndex) => api.post(`/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/revert`),
+  cleanJobChunks: (jobId, instruction) => api.post(`/chunks/job/${encodeURIComponent(jobId)}/clean`, { instruction }),
+  revertJobChunks: (jobId) => api.post(`/chunks/job/${encodeURIComponent(jobId)}/revert`),
+  upsertJobChunks: (jobId) => api.post(`/chunks/job/${encodeURIComponent(jobId)}/upsert`),
+  batchUpsertJobs: (jobIds) => api.post('/chunks/batch-upsert', { job_ids: jobIds }),
 
-  // ── 切片图片管理 ──────────────────────────────────────────────────────────
-  getChunkImages: (jobId, chunkIndex) =>
-    axios.get(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/images`),
+  getChunkImages: (jobId, chunkIndex) => api.get(`/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/images`),
   addChunkImage: (jobId, chunkIndex, file, page, insertPosition = 0) => {
     const fd = new FormData()
     fd.append('file', file)
     if (page != null) fd.append('page', page)
     fd.append('insert_position', insertPosition)
-    return axios.post(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/images`, fd)
+    return api.post(`/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/images`, fd)
   },
-  deleteChunkImage: (jobId, chunkIndex, imageId) =>
-    axios.delete(`${BASE}/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/images/${imageId}`),
+  deleteChunkImage: (jobId, chunkIndex, imageId) => api.delete(`/chunks/job/${encodeURIComponent(jobId)}/chunk/${chunkIndex}/images/${imageId}`),
 
-  // ── 文件 ──────────────────────────────────────────────────────────────────
-  listFiles: (params = {}) => axios.get(`${BASE}/files`, { params }),
-  deleteFile: (fileId) => axios.delete(`${BASE}/files`, { data: { file_id: fileId } }),
-  batchDeleteFiles: (fileIds, kbName) =>
-    axios.post(`${BASE}/files/batch-delete`, { file_ids: fileIds, kb_name: kbName }),
+  listFiles: (params = {}) => api.get('/files', { params }),
+  deleteFile: (fileId) => api.delete('/files', { data: { file_id: fileId } }),
+  batchDeleteFiles: (fileIds, kbName) => api.post('/files/batch-delete', { file_ids: fileIds, kb_name: kbName }),
 
-  // ── 类目 ──────────────────────────────────────────────────────────────────
-  listCategories: () => axios.get(`${BASE}/categories`),
-  listCategoryFiles: (categoryId) => axios.get(`${BASE}/categories/${categoryId}`),
-  createCategory: (data) => axios.post(`${BASE}/categories`, data),
-  getCategory: (id) => axios.get(`${BASE}/categories/${id}`),
-  updateCategory: (id, data) => axios.put(`${BASE}/categories/${id}`, data),
-  deleteCategory: (id) => axios.delete(`${BASE}/categories/${id}`),
-  deleteCategoryFile: (categoryId, fileId) => axios.delete(`${BASE}/categories/${categoryId}/files/${fileId}`),
-  batchDeleteCategoryFiles: (categoryId, fileIds) =>
-    axios.post(`${BASE}/categories/${categoryId}/files/batch-delete`, { file_ids: fileIds }),
+  listCategories: () => api.get('/categories'),
+  listCategoryFiles: (categoryId) => api.get(`/categories/${categoryId}`),
+  createCategory: (data) => api.post('/categories', data),
+  getCategory: (id) => api.get(`/categories/${id}`),
+  updateCategory: (id, data) => api.put(`/categories/${id}`, data),
+  deleteCategory: (id) => api.delete(`/categories/${id}`),
+  deleteCategoryFile: (categoryId, fileId) => api.delete(`/categories/${categoryId}/files/${fileId}`),
+  batchDeleteCategoryFiles: (categoryId, fileIds) => api.post(`/categories/${categoryId}/files/batch-delete`, { file_ids: fileIds }),
 
-  // ── Admin ─────────────────────────────────────────────────────────────────
-  listCollections: () => axios.get(`${BASE}/admin/collections`),
-  createCollection: (data) => axios.post(`${BASE}/admin/collections`, data),
-  updateCollection: (kbName, data) => axios.put(`${BASE}/admin/collections/${kbName}`, data),
-  deleteCollection: (kbName) => axios.delete(`${BASE}/admin/collections/${kbName}`),
+  listCollections: () => api.get('/admin/collections'),
+  createCollection: (data) => api.post('/admin/collections', data),
+  updateCollection: (kbName, data) => api.put(`/admin/collections/${kbName}`, data),
+  deleteCollection: (kbName) => api.delete(`/admin/collections/${kbName}`),
+  getAdminConfig: () => api.get('/admin/config'),
 
-  // ── 图片占位符解析 ────────────────────────────────────────────────────────
-  resolveImages: (placeholders) =>
-    axios.post(`${BASE}/chunks/resolve-images`, { placeholders }),
+  resolveImages: (placeholders) => api.post('/chunks/resolve-images', { placeholders }),
+  resolveQueryImages: (ossKeys) => api.post('/chunks/resolve-oss-keys', { oss_keys: ossKeys }),
 
-  // 用户查询图片（oss_key → 预签名 URL）
-  resolveQueryImages: (oss_keys) =>
-    axios.post(`${BASE}/chunks/resolve-oss-keys`, { oss_keys }),
-
-  // ── 对话会话 ──────────────────────────────────────────────────────────────
-  listSessions: (kbName, userId = 'default') =>
-    axios.get(`${BASE}/conversations`, { params: { kb_name: kbName, user_id: userId } }),
-  createSession: (kbName, title = '新会话', userId = 'default') =>
-    axios.post(`${BASE}/conversations`, { kb_name: kbName, title, user_id: userId }),
-  getSessionMessages: (sessionId, limit = 100) =>
-    axios.get(`${BASE}/conversations/${sessionId}/messages`, { params: { limit } }),
-  deleteSession: (sessionId) =>
-    axios.delete(`${BASE}/conversations/${sessionId}`),
+  listSessions: (kbName, userId = 'default') => api.get('/conversations', { params: { kb_name: kbName, user_id: userId } }),
+  createSession: (kbName, title = '新会话', userId = 'default') => api.post('/conversations', { kb_name: kbName, title, user_id: userId }),
+  getSessionMessages: (sessionId, limit = 100) => api.get(`/conversations/${sessionId}/messages`, { params: { limit } }),
+  deleteSession: (sessionId) => api.delete(`/conversations/${sessionId}`),
 }

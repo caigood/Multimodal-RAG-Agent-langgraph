@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """文档管理 API"""
+import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, Query
@@ -46,10 +47,11 @@ async def upload_document_to_category(
     category_id: str = Form(...),
 ):
     """上传文件到类目（OSS），不触发切分"""
-    record = document_service.upload_to_category(
-        file_name=file.filename,
-        file_content=await file.read(),
-        category_id=category_id,
+    record = await asyncio.to_thread(
+        document_service.upload_to_category,
+        file.filename,
+        await file.read(),
+        category_id,
     )
     return JSONResponse(content={
         "success": True,
@@ -149,10 +151,8 @@ async def search_documents(
     collection: str = Form(None),
     top_k: int = Form(10),
     filter_expr: Optional[str] = Form(None),
-    hybrid_search: Optional[str] = Form(None),
     keyword_filter: Optional[str] = Form(None),
     rerank: bool = Form(False),
-    rerank_model: str = Form("qwen3-rerank"),
     rerank_top_n: Optional[int] = Form(None),
 ):
     kb = kb_name or collection
@@ -163,10 +163,8 @@ async def search_documents(
         kb_name=kb,
         top_k=top_k,
         filter_expr=filter_expr or None,
-        ranker=hybrid_search or "RRF",
         keyword_filter=keyword_filter or None,
         rerank=rerank,
-        rerank_model=rerank_model,
         rerank_top_n=rerank_top_n,
     )
     return JSONResponse(content={

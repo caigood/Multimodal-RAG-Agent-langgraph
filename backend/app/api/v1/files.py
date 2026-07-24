@@ -29,13 +29,13 @@ async def list_files(
 
 @router.delete("")
 async def delete_file(req: DeleteFileRequest):
-    file_name = file_service.delete_file(req.file_id)
+    file_name = await file_service.delete_file(req.file_id)
     return JSONResponse(content={"success": True, "message": f"文件「{file_name}」已删除"})
 
 
 @router.post("/batch-delete")
 async def batch_delete_files(req: BatchDeleteFilesRequest):
-    result = file_service.batch_delete_files(req.file_ids, req.kb_name)
+    result = await file_service.batch_delete_files(req.file_ids, req.kb_name)
     ok = len(result["deleted"])
     fail = len(result["failed"])
     return JSONResponse(content={

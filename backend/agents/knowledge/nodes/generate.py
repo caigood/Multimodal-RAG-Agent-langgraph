@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Node 9: Generate
-Generates answer based on retrieved context using DashScope Generation.call()
-with tool calling support
+Node: Generate
+Generates answer based on retrieved context using DashScope Generation.call().
 """
 
 import re
+from dataclasses import replace
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 
 from dashscope import Generation
 from langchain_core.messages import AIMessage
@@ -91,17 +90,7 @@ def _convert_messages_to_dicts(messages) -> list:
             if msg.type == "human":
                 result.append({"role": "user", "content": msg.content})
             elif msg.type == "ai":
-                entry = {"role": "assistant", "content": msg.content or ""}
-                # preserve tool_calls if present
-                if hasattr(msg, "additional_kwargs") and msg.additional_kwargs.get("tool_calls"):
-                    entry["tool_calls"] = msg.additional_kwargs["tool_calls"]
-                result.append(entry)
-            elif msg.type == "tool":
-                result.append({
-                    "role": "tool",
-                    "content": msg.content,
-                    "tool_call_id": getattr(msg, "tool_call_id", "")
-                })
+                result.append({"role": "assistant", "content": msg.content or ""})
             elif msg.type == "system":
                 result.append({"role": "system", "content": msg.content})
         elif isinstance(msg, dict):
@@ -144,7 +133,7 @@ def prepare_generation_context(state: KnowledgeAgentState, config=None) -> Dict[
     返回 dict：messages, model_name, image_map, context_text, reranked_chunks,
     is_multimodal_kb, is_image_mode, query, rag_config
     """
-    query = state["rewritten_query"]
+    query = state["standalone_query"]
     reranked_chunks = state.get("merged_chunks") or []
     rag_config = state["config"]
     conversation_messages = state.get("messages", [])
@@ -159,7 +148,6 @@ def prepare_generation_context(state: KnowledgeAgentState, config=None) -> Dict[
     if is_multimodal_kb:
         model_name = "qwen3.5-plus"
 
-    context_parts = []
     image_map: dict = {}
 
     collection = rag_config.collection
@@ -169,32 +157,6 @@ def prepare_generation_context(state: KnowledgeAgentState, config=None) -> Dict[
             from app.db import get_kb_repository
             kb = get_kb_repository().get_by_name(collection)
             is_image_mode = bool(kb and kb.get("image_mode"))
-        except Exception:
-            pass
-
-    if is_image_mode:
-        try:
-            from app.db import get_chunk_image_repository
-            chunk_ids = []
-            for chunk in reranked_chunks:
-                if isinstance(chunk, dict):
-                    cid = chunk.get("chunk_id") or chunk.get("id")
-                else:
-                    cid = getattr(chunk, "chunk_id", None)
-                if cid:
-                    chunk_ids.append(cid)
-            if chunk_ids:
-                img_records = get_chunk_image_repository().get_by_chunk_ids(chunk_ids)
-                for r in img_records:
-                    ph = r.get("placeholder", "")
-                    ok = r.get("oss_key", "")
-                    if ok and ph:
-                        try:
-                            from app.services.oss_service import get_oss_service
-                            image_map[ph] = get_oss_service().get_presigned_url(ok, expires=3600)
-                        except Exception:
-                            from urllib.parse import quote
-                            image_map[ph] = f"/api/v1/documents/image-proxy?oss_key={quote(ok, safe='/')}"
         except Exception:
             pass
 
@@ -255,16 +217,20 @@ def prepare_generation_context(state: KnowledgeAgentState, config=None) -> Dict[
     if is_image_mode:
         try:
             from app.db import get_chunk_image_repository
-            chunk_ids_for_img = (
-                [c.get("chunk_id") for c in unique_vector_chunks if c.get("chunk_id")]
-                + [c.get("chunk_id") for c in graph_only_chunks if c.get("chunk_id")]
-            )
-            if chunk_ids_for_img:
-                img_records = get_chunk_image_repository().get_by_chunk_ids(list(set(chunk_ids_for_img)))
+            image_chunk_ids = []
+            for chunk in unique_vector_chunks + graph_only_chunks:
+                if isinstance(chunk, dict):
+                    cid = chunk.get("chunk_id") or chunk.get("id")
+                else:
+                    cid = getattr(chunk, "chunk_id", None) or getattr(chunk, "id", None)
+                if cid:
+                    image_chunk_ids.append(cid)
+            if image_chunk_ids:
+                img_records = get_chunk_image_repository().get_by_chunk_ids(list(dict.fromkeys(image_chunk_ids)))
                 for r in img_records:
                     ph = r.get("placeholder", "")
                     ok = r.get("oss_key", "")
-                    if ok and ph and ph not in image_map:
+                    if ok and ph:
                         try:
                             from app.services.oss_service import get_oss_service
                             image_map[ph] = get_oss_service().get_presigned_url(ok, expires=3600)
@@ -275,9 +241,8 @@ def prepare_generation_context(state: KnowledgeAgentState, config=None) -> Dict[
             pass
 
     # ── 选择 prompt 模板 ───────────────────────────────────────────────────
-    query_intent = state.get("query_intent", "general")
-    is_greeting = query_intent == "general" and any(
-        g in query.lower() for g in ["你好", "您好", "hello", "hi", "嗨"]
+    is_greeting = any(
+        greeting in query.lower() for greeting in ["你好", "您好", "hello", "hi", "嗨"]
     )
 
     if is_greeting:
@@ -341,78 +306,42 @@ def _finalize_generate_outputs(
     answer: str,
     ctx: Dict[str, Any],
     model_name: str,
-    tools_used: Optional[list] = None,
 ) -> Dict[str, Any]:
-    """由完整 answer 组装 generate 节点返回值（sources / confidence / metrics / AIMessage）"""
-    tools_used = tools_used or []
-    reranked_chunks = ctx["reranked_chunks"]
+    """组装最终答案，并用本地规则确认答案、证据、拒答与来源状态。"""
+    chunks = ctx["reranked_chunks"]
     image_map = ctx["image_map"]
+    sources = build_sources_from_reranked(chunks)
+    answer = (answer or "").strip()
+    has_evidence = any(
+        str(chunk.get("content", "") if isinstance(chunk, dict) else getattr(chunk, "content", "") or "").strip()
+        for chunk in chunks
+    )
+    refusal_markers = ("无法回答", "不能回答", "无法找到", "未找到相关", "没有足够", "证据不足", "抱歉")
+    is_refusal = any(marker in answer for marker in refusal_markers)
 
-    sources = build_sources_from_reranked(reranked_chunks)
+    if not answer:
+        answer = state["config"].fallback_message
+        is_refusal = True
+    if not has_evidence or not sources:
+        is_refusal = True
 
-    if reranked_chunks:
-        # 优先用 rerank_score（qwen3-rerank 的 0-1 相关性），否则用 score
-        def _s(c):
-            if isinstance(c, dict):
-                rs = c.get("rerank_score")
-                if rs is not None and rs > 0:
-                    return rs
-                return c.get("score", 0) or 0
-            rs = getattr(c, "rerank_score", None)
-            if rs is not None and rs > 0:
-                return rs
-            return getattr(c, "score", 0) or 0
-
-        raw_scores = [_s(c) for c in reranked_chunks[:3]]
-        avg_score = sum(raw_scores) / len(raw_scores)
-
-        # RRF 分数极小(0.01~0.05)，不能直接当置信度；
-        # 改用"源数量"估算置信度：有足够证据 ≈ 置信度合理
-        if avg_score < 0.1:
-            n = min(len(reranked_chunks), 10)
-            confidence = 0.55 + 0.04 * n  # 1chk→0.59  5→0.75  10→0.95
-        else:
-            confidence = min(avg_score, 1.0)
-    else:
-        confidence = 0.5
-
-    metrics = state["metrics"]
-    metrics.llm_calls += 1 + (1 if tools_used else 0)
+    # confidence 仅代表检索门控产生的可选证据相关度，不评估答案本身。
+    confidence = None if is_refusal else state.get("retrieval_quality_score")
+    metrics = replace(state["metrics"], llm_calls=state["metrics"].llm_calls + 1)
 
     return {
         "answer": answer,
+        "messages": [AIMessage(content=answer)],
         "confidence": confidence,
         "sources": sources,
-        "context": ctx["context_text"],
-        "tools_used": tools_used,
         "metrics": metrics,
         "image_map": image_map,
-        "messages": [AIMessage(content=answer)],
-        "processing_log": [{
-            "stage": "generate",
-            "timestamp": datetime.now().isoformat(),
-            "model": model_name,
-            "tools_used": tools_used,
-            "confidence": confidence,
-        }],
-        "precomputed_answer": None,
     }
 
 
 def generate_answer(state: KnowledgeAgentState, config=None) -> Dict[str, Any]:
-    """
-    Generate answer based on retrieved context using DashScope Generation.call()
-
-    Features:
-        - Uses DashScope Generation.call() directly (no LangChain LLM wrapper)
-        - Supports tool calling (send_email, web_search, query_database)
-        - Calculates confidence score
-        - Extracts source citations
-
-    若 state 含 precomputed_answer（OpenAI 兼容流式写入），则跳过 LLM 调用。
-    """
+    """Generate answer based on retrieved context using DashScope Generation.call()."""
     ctx = prepare_generation_context(state, config)
-    query = ctx["query"]
     reranked_chunks = ctx["reranked_chunks"]
     rag_config = ctx["rag_config"]
     image_map = ctx["image_map"]
@@ -421,19 +350,11 @@ def generate_answer(state: KnowledgeAgentState, config=None) -> Dict[str, Any]:
     is_multimodal_kb = ctx["is_multimodal_kb"]
     is_image_mode = ctx["is_image_mode"]
 
-    pre = state.get("precomputed_answer")
     api_key = settings.dashscope_api_key
 
-    print(f"\n[Node 5: Generate] Generating answer with {len(reranked_chunks)} chunks "
-          f"and precomputed={pre is not None} [{_FP}]")
+    print(f"\n[Generate] Generating answer with {len(reranked_chunks)} chunks")
 
     try:
-        if pre is not None:
-            answer = pre
-            return _finalize_generate_outputs(state, answer, ctx, model_name, [])
-
-        tools_used = []
-
         print(f"[Generate] model={model_name}, multimodal={is_multimodal_kb}, has_image={bool(getattr(rag_config, 'query_image_url', None))}")
 
         if is_multimodal_kb:
@@ -470,18 +391,17 @@ def generate_answer(state: KnowledgeAgentState, config=None) -> Dict[str, Any]:
         if is_image_mode or is_multimodal_kb:
             answer = _sanitize_image_placeholders(answer, image_map)
 
-        out = _finalize_generate_outputs(state, answer, ctx, model_name, tools_used)
-        return out
+        return _finalize_generate_outputs(state, answer, ctx, model_name)
 
     except Exception as e:
         import traceback
         print(f"[Generate] Error: {e}\n{traceback.format_exc()}")
+        message = state["config"].fallback_message
         return {
-            "answer": f"抱歉，生成答案时出现错误: {e}",
-            "confidence": 0.0,
+            "answer": message,
+            "messages": [AIMessage(content=message)],
+            "confidence": None,
             "sources": [],
-            "context": "",
-            "tools_used": [],
+            "image_map": None,
             "all_errors": [f"Generation failed: {e}"],
-            "precomputed_answer": None,
         }

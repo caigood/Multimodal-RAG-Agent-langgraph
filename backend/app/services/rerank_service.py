@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Rerank 服务
-封装 DashScope TextReRank API（qwen3-rerank）
+封装 DashScope TextReRank API，模型由系统环境变量统一配置
 输入 query + chunks（无占位符的纯文本），输出按 relevance_score 降序排列的 chunks
 """
 import logging
@@ -27,12 +27,12 @@ class RerankService:
         self,
         query: str,
         chunks: list,
-        model: str = "qwen3-rerank",
         top_n: int = 10,
         retry: int = 3,
     ) -> list:
         """
         对 chunks 按与 query 的语义相关性重排，返回 top_n 个。
+        Rerank 模型由系统级 RERANK_MODEL 配置统一指定。
 
         chunks 格式：dict（含 content 字段）或具备 content 属性的历史对象。
         content 应为 Milvus 中存储的无占位符纯文本。
@@ -53,7 +53,7 @@ class RerankService:
         for attempt in range(retry):
             try:
                 resp = dashscope.TextReRank.call(
-                    model=model,
+                    model=settings.rerank_model,
                     query=query,
                     documents=documents,
                     top_n=top_n,
@@ -76,7 +76,7 @@ class RerankService:
                         chunk.rerank_score = score
                     reranked.append(chunk)
 
-                logger.info(f"[Rerank] {model} 完成，输入 {len(candidates)} 条，输出 {len(reranked)} 条")
+                logger.info(f"[Rerank] {settings.rerank_model} 完成，输入 {len(candidates)} 条，输出 {len(reranked)} 条")
                 return reranked
 
             except Exception as e:

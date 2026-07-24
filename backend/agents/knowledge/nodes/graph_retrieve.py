@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-每次请求执行 Neo4j 知识图谱检索，结果写入 kg_graph_chunks（供 generate 分节组装）
+首次和二次检索均严格按 config.kg_enabled 决定是否执行 Neo4j 知识图谱检索。
+kg_enabled=False 时清空 kg_graph_chunks 并跳过 Neo4j；启用时结果写入该字段供 generate 分节组装。
 """
 import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from datetime import datetime
-from typing import Any, Dict
 
 from ..state import KnowledgeAgentState
 
@@ -25,23 +24,16 @@ def _resolve_graph_id(collection: str, cfg) -> str | None:
 
 
 def graph_retrieve(state: KnowledgeAgentState) -> dict:
-    start = datetime.now()
     cfg = state.get("config")
     if not cfg or not getattr(cfg, "kg_enabled", True):
-        return {
-            "kg_graph_chunks": [],
-            "processing_log": [{"stage": "graph_retrieve", "skipped": True, "reason": "kg_disabled"}],
-        }
+        return {"kg_graph_chunks": []}
 
     collection = getattr(cfg, "collection", None) or ""
     graph_id = _resolve_graph_id(collection, cfg)
     if not graph_id:
-        return {
-            "kg_graph_chunks": [],
-            "processing_log": [{"stage": "graph_retrieve", "skipped": True, "reason": "no_graph_id"}],
-        }
+        return {"kg_graph_chunks": []}
 
-    query = state.get("rewritten_query") or state.get("query") or ""
+    query = state.get("search_query") or ""
     top_k = int(getattr(cfg, "kg_top_k", 5) or 5)
     timeout = float(getattr(cfg, "kg_timeout_seconds", 2.0) or 2.0)
 
@@ -71,17 +63,11 @@ def graph_retrieve(state: KnowledgeAgentState) -> dict:
                          [{"id": c.get("chunk_id"), "score": c.get("unified_score"),
                            "relations": c.get("relation_types")} for c in chunks])
     except FuturesTimeout:
+        fut.cancel()
         logger.warning("[GraphRetrieve] WhyHow 查询超时 %.1fs graph=%s", timeout, graph_id)
         return {
             "kg_graph_chunks": [],
             "all_warnings": [f"graph_retrieve_timeout:{timeout}s"],
-            "processing_log": [
-                {
-                    "stage": "graph_retrieve",
-                    "duration_ms": (datetime.now() - start).total_seconds() * 1000,
-                    "timeout": True,
-                }
-            ],
         }
     except Exception as e:
         logger.exception("[GraphRetrieve] WhyHow 查询失败")
@@ -90,15 +76,4 @@ def graph_retrieve(state: KnowledgeAgentState) -> dict:
             "all_warnings": [f"graph_retrieve:{e}"],
         }
 
-    ms = (datetime.now() - start).total_seconds() * 1000
-    return {
-        "kg_graph_chunks": chunks,
-        "processing_log": [
-            {
-                "stage": "graph_retrieve",
-                "duration_ms": ms,
-                "chunk_count": len(chunks),
-                "graph_id": graph_id,
-            }
-        ],
-    }
+    return {"kg_graph_chunks": chunks}

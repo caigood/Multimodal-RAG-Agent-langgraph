@@ -68,7 +68,7 @@
           <div v-show="activeMenu === 'dashboard'"><DashboardView :current-model="selectedModel" @navigate="handleMenuSelect" /></div>
           <div v-show="activeMenu === 'chat'"><SimpleChat :model="selectedModel" /></div>
           <div v-show="activeMenu === 'kb-categories'"><CategoryManager /></div>
-          <div v-show="activeMenu.startsWith('admin')"><AdminPanel :active-tab="adminTab" /></div>
+          <div v-show="activeMenu.startsWith('admin')"><AdminPanel :active-tab="adminTab" :reset-key="adminResetKey" @go-categories="handleMenuSelect('kb-categories')" /></div>
           <div v-show="activeMenu === 'devtools'"><DevTools /></div>
         </main>
       </div>
@@ -89,6 +89,7 @@ const activeMenu = ref('dashboard')
 const selectedModel = ref('qwen3.7-plus')
 const availableModels = ref([])
 const apiStatus = ref(false)
+const adminResetKey = ref(0)
 
 const navItems = [
   { key: 'dashboard', label: '首页', icon: 'HomeFilled' },
@@ -113,7 +114,10 @@ const pageMeta = {
 const pageTitle    = computed(() => pageMeta[activeMenu.value]?.title || '')
 const pageSubtitle = computed(() => pageMeta[activeMenu.value]?.sub || '')
 
-const handleMenuSelect = (key) => { activeMenu.value = key }
+const handleMenuSelect = (key) => {
+  if (key === 'admin-collections') adminResetKey.value += 1
+  activeMenu.value = key
+}
 
 onMounted(async () => {
   try {

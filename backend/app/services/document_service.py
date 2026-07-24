@@ -92,13 +92,14 @@ async def upload_document(
     from app.services.category_service import get_or_create_default_category
     default_cat = get_or_create_default_category()
     cat_file_repo = get_category_file_repository()
-    # __default__ 类目下同名文件幂等处理（理论上不会出现，但防御一下）
-    existing_cat_file = cat_file_repo.get_by_category_and_filename(default_cat["id"], file_name)
+    # __default__ 为内部所有权记录，名称带知识库命名空间，避免不同 KB 同名文件互相覆盖。
+    default_owner_name = f"{kb_name}/{file_name}"
+    existing_cat_file = cat_file_repo.get_by_category_and_filename(default_cat["id"], default_owner_name)
     if existing_cat_file:
         cat_file_repo.delete(existing_cat_file["id"])
     cat_file_record = cat_file_repo.create(
         category_id=default_cat["id"],
-        file_name=file_name,
+        file_name=default_owner_name,
         oss_key=oss_key,
     )
 
@@ -423,10 +424,8 @@ def search_documents(
     kb_name: str,
     top_k: int = 10,
     filter_expr: Optional[str] = None,
-    ranker: str = "RRF",
     keyword_filter: Optional[str] = None,
     rerank: bool = False,
-    rerank_model: str = "qwen3-rerank",
     rerank_top_n: Optional[int] = None,
 ) -> list:
     from app.services.milvus_service import get_milvus_service
@@ -435,7 +434,6 @@ def search_documents(
         query=query,
         top_k=top_k,
         filter_expr=filter_expr,
-        ranker=ranker,
         keyword_filter=keyword_filter or None,
     )
 
@@ -476,7 +474,6 @@ def search_documents(
         hits = get_rerank_service().rerank(
             query=query,
             chunks=hits,
-            model=rerank_model,
             top_n=top_n,
         )
 

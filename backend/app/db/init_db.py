@@ -75,8 +75,18 @@ _TABLES = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_kb_file_kb ON knowledge_file(kb_id)",
     "CREATE INDEX IF NOT EXISTS idx_kb_file_status ON knowledge_file(status)",
-    # knowledge_file 补列：图谱同步标识
+    # knowledge_file 补列：图谱同步意图与完整执行状态
     "ALTER TABLE knowledge_file ADD COLUMN IF NOT EXISTS sync_graph BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE knowledge_file ADD COLUMN IF NOT EXISTS graph_sync_status TEXT NOT NULL DEFAULT 'disabled'",
+    "ALTER TABLE knowledge_file ADD COLUMN IF NOT EXISTS graph_sync_error TEXT",
+    "ALTER TABLE knowledge_file ADD COLUMN IF NOT EXISTS graph_synced_at TIMESTAMPTZ",
+    """
+    UPDATE knowledge_file
+    SET graph_sync_status = CASE WHEN sync_graph THEN 'pending' ELSE 'disabled' END
+    WHERE graph_sync_status IS NULL
+       OR graph_sync_status NOT IN ('disabled', 'pending', 'syncing', 'synced', 'error')
+       OR (sync_graph = TRUE AND graph_sync_status = 'disabled')
+    """,
 
     # 5. 处理任务
     """

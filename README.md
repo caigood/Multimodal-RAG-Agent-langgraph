@@ -17,14 +17,17 @@
 
 ## ✨ 功能亮点
 
-- **多轮对话记忆** — 基于 LangGraph checkpointer，重启不丢失，支持指代消解
+- **多轮对话记忆** — 基于 LangGraph checkpointer，Linux / Docker 默认使用 PostgreSQL 持久化；Windows Proactor 或连接异常时降级为仅进程内有效的 MemorySaver，并支持指代消解
+- **问题分析快速通道** — 清晰独立问题本地直接判断；仅在存在历史且当前问题有明确指代或省略时最多调用一次轻量 LLM，同时生成回答用 `standalone_query`、检索用 `search_query` 并判断单/多文档范围
 - **混合检索** — Dense（语义）+ BM25（关键词）+ RRF 融合，可选 Rerank 精排
+- **检索质量门控** — 在生成答案前评估图谱与向量证据；失败时有限次改写检索词并完整重检，预算耗尽后返回可配置 fallback
 - **Rerank 支持** — 集成 qwen3-rerank，检索候选池与最终 top-k 独立配置
-- **知识图谱（Neo4j）** — LLM 自动抽取实体关系存入 Neo4j，问答时融合图谱检索结果增强上下文
-- **图文模式** — 自动提取 PDF/DOCX 图片，与文本切片关联，LLM 回答可展示图片
+- **知识图谱（Neo4j，可选）** — LLM 自动抽取实体关系存入 Neo4j，启用后在问答时融合图谱检索结果增强上下文
+- **图文模式** — 自动提取 PDF/DOCX 图片并与文本切片关联，支持文本/图片联合检索和回答图片展示
 - **Excel 结构化切分** — 逐 sheet 配置列选择和别名，每行转为 `key=value` 格式，LLM 精准理解表格
 - **切分与向量化解耦** — 切分后人工审查，手动触发向量化；大文件分批容错，失败可重试
-- **每库独立检索配置** — ranker / top_k / group_size / memory_turns / rerank 参数按知识库隔离
+- **每库独立检索配置** — ranker / top_k / group_size / memory_turns / rerank / 检索门控参数按知识库隔离
+- **SSE 问答接口** — 图执行期间发送保活注释，完整答案生成后通过 `meta` / `delta` / `done` 事件分片传输（非模型 token 级实时流）
 - **Supervisor 多智能体** — 统一入口自动路由到 Knowledge / Email / Search 等子 Agent，支持工具调用协作
 - **联网搜索 Agent** — 集成 Tavily Search API，支持实时信息、新闻、天气等外部信息检索
 - **邮件发送 Agent** — 集成系统统一 SMTP 发信能力，可将总结、报告、问答结果发送到指定邮箱
@@ -85,20 +88,23 @@ npm run dev
 
 ```mermaid
 graph LR
-    A[用户提问] --> B[query_rewrite\n多轮指代消解]
-    B --> C[query_classify\nsingle / multi]
-    C --> D[determine_retrieval_strategy\nkeyword / hybrid]
-    D --> E[graph_retrieve\nNeo4j 知识图谱]
-    E --> F{路由: single / multi}
-    F -->|single_doc| G[single_doc_retrieve\nRRF 混合检索]
-    F -->|multi_doc| H[multi_doc_retrieve\n分组搜索]
-    H --> I[filter_chunks\n分数阈值过滤]
-    I --> J[select_top_k\n/ rerank]
-    G --> J
-    J --> K[generate_answer\nLLM 生成]
-    K --> L{quality_check\n可选}
-    L -->|pass| M[finalize_metrics]
-    L -->|skip| M
+    A[用户提问] --> B[analyze_query<br/>本地快速通道 / 指代消解<br/>standalone + search + single / multi]
+    B --> C[determine_retrieval_strategy<br/>keyword / hybrid]
+    C --> D[graph_retrieve<br/>可选 Neo4j 知识图谱]
+    D --> E{single / multi}
+    E -->|single_doc| F[single_doc_retrieve<br/>混合或多模态检索]
+    E -->|multi_doc| G[multi_doc_retrieve<br/>分组或多模态检索]
+    G --> H[filter_chunks<br/>相关性过滤]
+    F --> I[select_top_k_chunks<br/>可选 rerank]
+    H --> I
+    I --> J{retrieval_quality<br/>生成前质量门控}
+    J -->|pass| K[generate_answer]
+    J -->|retry| L[rewrite_retrieval_query<br/>仅更新 search_query]
+    L --> D
+    J -->|重试耗尽| M[fallback_answer]
+    K --> N[finalize_metrics]
+    M --> N
+    N --> O[END]
 ```
 
 ### Supervisor 多智能体架构
@@ -125,7 +131,7 @@ graph TD
 | 层 | 技术 |
 |----|------|
 | 后端框架 | FastAPI + Uvicorn |
-| Agent 编排 | LangGraph（StateGraph + ToolNode + MemorySaver） |
+| Agent 编排 | LangGraph（StateGraph + ToolNode；AsyncPostgresSaver 持久化，异常或 Windows Proactor 下回退 MemorySaver） |
 | LLM / Embedding / Rerank | 阿里云 DashScope（Qwen 系列） |
 | 向量数据库 | Milvus Standalone |
 | 图数据库 | Neo4j 5.x Community |

@@ -98,9 +98,9 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import axios from 'axios'
+import api from '../../services/api'
 
 const props = defineProps({
   kbName: { type: String, required: true }
@@ -116,7 +116,7 @@ const selectedFileTriples = ref([])
 const loadGraph = async () => {
   loading.value = true
   try {
-    const { data } = await axios.get(`http://localhost:8000/api/v1/knowledge-graph/kb/${props.kbName}`)
+    const { data } = await api.get(`/knowledge-graph/kb/${props.kbName}`)
     if (data.success) {
       graphData.value = data.data
     }

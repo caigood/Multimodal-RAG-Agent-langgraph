@@ -1,8 +1,9 @@
 import axios from 'axios'
 
-// Create axios instance
-const api = axios.create({
-  baseURL: '/api/v1',  // 更新为新的 API 路径
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+
+export const api = axios.create({
+  baseURL: API_BASE,
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json'
@@ -48,25 +49,12 @@ export const apiService = {
   },
 
   // Chat with agent
-  async chat(messages, model = null, temperature = null) {
+  async chat(messages, model = null, temperature = null, signal = undefined) {
     const payload = { messages }
     if (model) payload.model = model
     if (temperature !== null) payload.temperature = temperature
     
-    const response = await api.post('/chat', payload)  // 对应 /api/v1/chat
-    return response.data
-  },
-
-  // Knowledge base query
-  async knowledgeQuery(query, sessionId = 'default', model = null, collection = null, forceMultiDoc = null, keywordFilter = null, queryImage = null) {
-    const payload = { query, session_id: sessionId }
-    if (model) payload.model = model
-    if (collection) payload.collection = collection
-    if (forceMultiDoc != null) payload.force_multi_doc = forceMultiDoc
-    if (keywordFilter) payload.keyword_filter = keywordFilter
-    if (queryImage) payload.query_image = queryImage
-
-    const response = await api.post('/knowledge', payload)
+    const response = await api.post('/chat', payload, { signal })  // 对应 /api/v1/chat
     return response.data
   },
 
@@ -83,7 +71,7 @@ export const apiService = {
       ...(payload.keyword_filter && { keyword_filter: payload.keyword_filter }),
       ...(payload.query_image && { query_image: payload.query_image }),
     }
-    const res = await fetch('/api/v1/knowledge/stream', {
+    const res = await fetch(`${API_BASE}/knowledge/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -96,6 +84,11 @@ export const apiService = {
     })
     if (!res.ok) {
       const err = new Error(`stream HTTP ${res.status}`)
+      handlers.onError?.(err)
+      throw err
+    }
+    if (!res.body) {
+      const err = new Error('stream response body is unavailable')
       handlers.onError?.(err)
       throw err
     }
@@ -129,11 +122,22 @@ export const apiService = {
     }
 
     let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (value) buffer += decoder.decode(value, { stream: !done })
-      if (done) {
-        buffer += decoder.decode()
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (value) buffer += decoder.decode(value, { stream: !done })
+        if (done) {
+          buffer += decoder.decode()
+          buffer = normalizeLf(buffer)
+          let sep
+          while ((sep = buffer.indexOf('\n\n')) >= 0) {
+            const block = buffer.slice(0, sep)
+            buffer = buffer.slice(sep + 2)
+            dispatchSseBlock(block)
+          }
+          if (buffer.trim()) dispatchSseBlock(buffer)
+          break
+        }
         buffer = normalizeLf(buffer)
         let sep
         while ((sep = buffer.indexOf('\n\n')) >= 0) {
@@ -141,31 +145,11 @@ export const apiService = {
           buffer = buffer.slice(sep + 2)
           dispatchSseBlock(block)
         }
-        if (buffer.trim()) dispatchSseBlock(buffer)
-        break
       }
-      buffer = normalizeLf(buffer)
-      let sep
-      while ((sep = buffer.indexOf('\n\n')) >= 0) {
-        const block = buffer.slice(0, sep)
-        buffer = buffer.slice(sep + 2)
-        dispatchSseBlock(block)
-      }
+    } finally {
+      try { await reader.cancel() } catch {}
+      reader.releaseLock()
     }
-  },
-
-  // Knowledge base QA (alias for better naming)
-  async knowledgeQA(query, model = null, sessionId = 'default', collection = null, forceMultiDoc = null, keywordFilter = null, queryImage = null) {
-    return this.knowledgeQuery(query, sessionId, model, collection, forceMultiDoc, keywordFilter, queryImage)
-  },
-
-  // Generic API call for testing
-  async genericCall(method, endpoint, data = null) {
-    const config = { method, url: endpoint }
-    if (data) config.data = data
-    
-    const response = await api(config)
-    return response.data
   }
 }
 

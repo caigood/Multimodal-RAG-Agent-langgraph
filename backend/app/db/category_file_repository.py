@@ -46,6 +46,12 @@ class CategoryFileRepository(BaseRepository):
         )
         return int(rows[0]["cnt"]) if rows else 0
 
+    def count_by_oss_key(self, oss_key: str) -> int:
+        rows = self._execute_select(
+            "SELECT COUNT(*) AS count FROM knowledge_category_file WHERE oss_key = %s", (oss_key,)
+        )
+        return int(rows[0]["count"]) if rows else 0
+
     def delete(self, file_id: str):
         self._execute_sql("DELETE FROM knowledge_category_file WHERE id = %s", (file_id,))
 

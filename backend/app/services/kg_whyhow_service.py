@@ -56,7 +56,9 @@ class KGRetrievalService:
             from app.services.kg_graph_sync_service import get_kg_graph_sync_service
 
             kg_sync = get_kg_graph_sync_service()
-            relation_rows = kg_sync.search_related_chunks(kb_name=kb_name, query=query, top_k=top_k)
+            relation_rows = kg_sync.search_related_chunks(
+                kb_name=kb_name, query=query, top_k=top_k, timeout=timeout
+            )
         except Exception as e:
             logger.warning("[KGRetrieval] Neo4j 查询失败: %s", e)
             return []

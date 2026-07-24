@@ -203,13 +203,11 @@ async def upsert_job_to_milvus(job_id: str) -> dict:
 
     # 如果用户选择了"同步到知识图谱"，向量化完成后同步到 KT
     if file_record.get("sync_graph"):
+        file_repo = get_file_repository()
+        file_repo.update_graph_sync_status(file_record["id"], "syncing")
         try:
             from app.services.kg_graph_sync_service import get_kg_graph_sync_service
             kg_sync = get_kg_graph_sync_service()
-            chunk_vectors = {
-                c["chunk_id"]: c.get("dense") or c.get("embedding", [])
-                for c in milvus_chunks
-            }
             await kg_sync.sync_chunks_to_graph(
                 job_id=job_id,
                 kb_name=kb["name"],
@@ -219,13 +217,14 @@ async def upsert_job_to_milvus(job_id: str) -> dict:
                         "chunk_id": c["chunk_id"],
                         "content": c["current_content"],
                         "chunk_index": c["chunk_index"],
-                        "vector": chunk_vectors.get(c["chunk_id"], [])
                     }
                     for c in pg_chunks if c.get("current_content")
                 ],
             )
+            file_repo.update_graph_sync_status(file_record["id"], "synced")
             logger.info(f"[pipeline] 图谱同步完成 job_id={job_id}")
         except Exception as e:
+            file_repo.update_graph_sync_status(file_record["id"], "error", str(e))
             logger.error(f"[pipeline] 图谱同步失败 job_id={job_id}: {e}")
 
     return result

@@ -3,7 +3,9 @@
 LangGraph AsyncPostgresSaver 单例
 使用 psycopg3 连接池，与业务层 psycopg2 完全隔离
 """
+import asyncio
 import logging
+import os
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,17 @@ async def init_checkpointer():
         return _checkpointer
 
     try:
+        # psycopg3 异步连接不支持 Windows 默认 ProactorEventLoop。
+        # 本地 Windows 开发环境使用 MemorySaver；Linux/Docker 仍使用 PostgreSQL 持久化。
+        if os.name == "nt" and isinstance(
+            asyncio.get_running_loop(), asyncio.ProactorEventLoop
+        ):
+            from langgraph.checkpoint.memory import MemorySaver
+
+            _checkpointer = MemorySaver()
+            logger.warning("Windows ProactorEventLoop 不支持 psycopg 异步连接，已使用 MemorySaver")
+            return _checkpointer
+
         from psycopg_pool import AsyncConnectionPool
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         from app.core.config import settings

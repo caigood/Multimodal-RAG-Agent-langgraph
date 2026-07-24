@@ -6,18 +6,17 @@ Select / Rerank Node（single_doc 和 multi_doc 路径共用）
   按 RRF score 降序取 llm_context_top_k，与原逻辑完全一致。
 
 有 rerank（rerank_enabled=True，非多模态知识库）：
-  调用 qwen3-rerank 对候选 chunks 重排，
+  调用系统配置的 Rerank 模型对候选 chunks 重排，
   single_doc 取 single_doc_rerank_top_k，multi_doc 取 multi_doc_rerank_top_k。
   rerank 失败时自动降级为原始 score 排序。
 
-数据来源：
-  multi_doc 路径：filtered_chunks（经过 filter_chunks 节点）
-  single_doc 路径：merged_chunks（直接来自检索节点，未经 filter）
-  优先读 filtered_chunks，为空则 fallback 到 merged_chunks。
+数据来源按 query_type 确定：
+  multi_doc 路径使用 filtered_chunks（包括明确的空列表）。
+  single_doc 路径始终使用 merged_chunks。
 """
 
 from typing import Dict, Any
-from datetime import datetime
+from dataclasses import replace
 
 from ..state import KnowledgeAgentState
 
@@ -32,11 +31,15 @@ def select_top_k_chunks(state: KnowledgeAgentState) -> Dict[str, Any]:
     """
     统一的截断 / rerank 节点，single_doc 和 multi_doc 路径共用。
     """
-    # 数据来源：filtered_chunks 优先，为空则用 merged_chunks
-    candidates = state.get("filtered_chunks") or state.get("merged_chunks") or []
     config = state["config"]
+    is_multi_doc = state.get("query_type") == "multi_doc"
+    if is_multi_doc:
+        candidates = state.get("filtered_chunks")
+        if candidates is None:
+            candidates = []
+    else:
+        candidates = state.get("merged_chunks") or []
 
-    is_multi_doc = bool(state.get("filtered_chunks"))  # multi_doc 路径有 filtered_chunks
     is_multimodal = getattr(config, "kb_type", "standard") == "multimodal"
     rerank_enabled = getattr(config, "rerank_enabled", False) and not is_multimodal
 
@@ -50,17 +53,15 @@ def select_top_k_chunks(state: KnowledgeAgentState) -> Dict[str, Any]:
                 if is_multi_doc
                 else getattr(config, "single_doc_rerank_top_k", 5)
             )
-            query = state.get("rewritten_query") or state.get("query", "")
-            model = getattr(config, "rerank_model_name", "qwen3-rerank")
-
+            query = state.get("search_query", "")
+            from app.core.config import settings
             from app.services.rerank_service import get_rerank_service
             top_chunks = get_rerank_service().rerank(
                 query=query,
                 chunks=candidates,
-                model=model,
                 top_n=top_k,
             )
-            method = f"rerank({model})"
+            method = f"rerank({settings.rerank_model})"
         else:
             # ── 原始 score 排序路径 ──────────────────────────────────────────
             top_k = getattr(config, "llm_context_top_k", 10)
@@ -69,20 +70,12 @@ def select_top_k_chunks(state: KnowledgeAgentState) -> Dict[str, Any]:
 
         print(f"[SelectTopK] method={method}, selected={len(top_chunks)}")
 
-        metrics = state["metrics"]
-        metrics.chunks_after_rerank = len(top_chunks)
+        metrics = replace(state["metrics"], chunks_after_rerank=len(top_chunks))
 
         return {
             "reranked_chunks": top_chunks,
             "merged_chunks": top_chunks,
             "metrics": metrics,
-            "processing_log": [{
-                "stage": "select_top_k",
-                "timestamp": datetime.now().isoformat(),
-                "method": method,
-                "chunks_in": len(candidates),
-                "chunks_out": len(top_chunks),
-            }],
         }
 
     except Exception as e:

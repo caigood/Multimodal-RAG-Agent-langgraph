@@ -4,7 +4,7 @@ Filter Node - 按相关性分数过滤切片（multi_doc 路径专用）
 """
 
 from typing import Dict, Any
-from datetime import datetime
+from dataclasses import replace
 
 from ..state import KnowledgeAgentState
 
@@ -33,19 +33,11 @@ def filter_chunks(state: KnowledgeAgentState) -> Dict[str, Any]:
 
         print(f"[Filter] Kept {len(filtered)}/{len(merged_chunks)} chunks")
 
-        metrics = state["metrics"]
-        metrics.chunks_after_filter = len(filtered)
+        metrics = replace(state["metrics"], chunks_after_filter=len(filtered))
 
         return {
             "filtered_chunks": filtered,
             "metrics": metrics,
-            "processing_log": [{
-                "stage": "filter",
-                "timestamp": datetime.now().isoformat(),
-                "chunks_before": len(merged_chunks),
-                "chunks_after": len(filtered),
-                "threshold": min_score,
-            }]
         }
 
     except Exception as e:

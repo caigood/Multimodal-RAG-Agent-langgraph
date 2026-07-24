@@ -67,9 +67,10 @@ class Settings:
     embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "1536"))
     embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "10"))
 
-    # ── 向量检索 ──────────────────────────────────────────────────────────────
+    # ── 检索与 Rerank ─────────────────────────────────────────────────────────
     vector_top_k: int = int(os.getenv("VECTOR_TOP_K", "10"))
     vector_score_threshold: float = float(os.getenv("VECTOR_SCORE_THRESHOLD", "0"))
+    rerank_model: str = os.getenv("RERANK_MODEL", "qwen3-rerank")
 
     # ── 切片 ──────────────────────────────────────────────────────────────────
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "500"))
@@ -118,6 +119,17 @@ SUPPORTED_MODELS = {
     "qwen3.7-plus": {"name": "qwen3.7-plus", "description": "主力对话模型，适合复杂问答与多智能体调度", "provider": "dashscope", "max_tokens": 32000},
     "kimi-k2.6": {"name": "kimi-k2.6", "description": "Kimi 主力模型，适合通用问答与复杂推理", "provider": "dashscope", "max_tokens": 32000},
 }
+
+# 环境变量配置的默认模型必须可用，避免升级模型后还需同步修改注册表。
+SUPPORTED_MODELS.setdefault(
+    settings.default_model,
+    {
+        "name": settings.default_model,
+        "description": "环境变量配置的默认对话模型",
+        "provider": "dashscope",
+        "max_tokens": 32000,
+    },
+)
 
 
 class SuccessMessages:

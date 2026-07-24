@@ -11,7 +11,6 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.core.config import settings
 import httpx
-import ssl
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +25,6 @@ def get_llm_client(model_name: str | None = None):
     Returns:
         ChatOpenAI 客户端
     """
-    if not settings.ssl_verify:
-        ssl._create_default_https_context = ssl._create_unverified_context
-    
     http_client = httpx.Client(
         verify=settings.ssl_verify,
         timeout=settings.timeout

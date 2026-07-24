@@ -5,6 +5,7 @@ Single Document Retrieve Node - 单文档查询
 """
 
 import logging
+from dataclasses import replace
 from datetime import datetime
 
 from ..state import KnowledgeAgentState, RetrievalStrategy
@@ -32,13 +33,12 @@ def single_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
     start_time = datetime.now()
     
     try:
-        query = state["rewritten_query"]
+        query = state["search_query"]
         retrieval_strategy = state.get("retrieval_strategy", RetrievalStrategy.HYBRID)
         _cfg = state.get("config")
         collection = _cfg.collection if _cfg else None
 
         # 从 RAGConfig 读检索参数
-        ranker       = _cfg.ranker          if _cfg else "RRF"
         rrf_k        = _cfg.rrf_k           if _cfg else 60
         top_k        = _cfg.single_doc_top_k if _cfg else 20
         keyword_filter = _cfg.keyword_filter if _cfg else None
@@ -49,7 +49,7 @@ def single_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
             return multimodal_retrieve(state)
 
         logger.info(f"[SingleDocRetrieve] 开始单文档检索: {query}")
-        logger.info(f"[SingleDocRetrieve] 检索策略: {retrieval_strategy.value}, collection={collection}, ranker={ranker}, top_k={top_k}")
+        logger.info(f"[SingleDocRetrieve] 检索策略: {retrieval_strategy.value}, collection={collection}, top_k={top_k}")
         
         # 获取检索服务
         retrieval_service = get_retrieval_service()
@@ -62,7 +62,6 @@ def single_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
                 top_k=top_k,
                 collection=collection,
                 keyword_filter=keyword_filter,
-                ranker=ranker,
                 rrf_k=rrf_k,
             )
         elif retrieval_strategy == RetrievalStrategy.HYBRID:
@@ -71,7 +70,6 @@ def single_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
                 query=query,
                 top_k=top_k,
                 collection=collection,
-                ranker=ranker,
                 rrf_k=rrf_k,
             )
         else:
@@ -80,7 +78,6 @@ def single_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
                 query=query,
                 top_k=top_k,
                 collection=collection,
-                ranker=ranker,
                 rrf_k=rrf_k,
             )
         
@@ -88,30 +85,20 @@ def single_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
 
         logger.info(f"[SingleDocRetrieve] 检索完成 ({duration:.0f}ms): 找到 {len(chunks)} 个结果")
         
-        # 更新metrics
-        metrics = state["metrics"]
-        metrics.retrieval_duration_ms = duration
-        metrics.total_chunks_retrieved = len(chunks)
-        
+        metrics = replace(
+            state["metrics"],
+            retrieval_duration_ms=duration,
+            total_chunks_retrieved=len(chunks),
+        )
+
         return {
             "merged_chunks": chunks,
-            "total_candidates": len(chunks),
-            "retrieval_strategy_used": retrieval_strategy,
             "metrics": metrics,
-            "processing_log": [{
-                "stage": "single_doc_retrieve",
-                "duration_ms": duration,
-                "chunks_count": len(chunks),
-                "strategy": retrieval_strategy.value,
-            }],
         }
 
     except Exception as e:
         logger.error(f"[SingleDocRetrieve] 检索失败: {e}", exc_info=True)
         return {
             "merged_chunks": [],
-            "total_candidates": 0,
             "all_errors": [f"单文档检索失败: {e}"],
-            "error": str(e),
-            "error_stage": "single_doc_retrieve",
         }

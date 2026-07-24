@@ -54,7 +54,7 @@
           <div class="collection-select-wrap">
             <el-icon class="col-icon"><data-analysis /></el-icon>
             <el-select v-model="selectedCollection" size="small" placeholder="选择知识库"
-              style="width:180px" @change="clearMessages">
+              style="width:180px">
               <el-option v-for="col in collections" :key="col.name"
                 :label="col.display_name || col.name" :value="col.name" />
             </el-select>
@@ -139,7 +139,7 @@
 
       <!-- Message list -->
       <transition-group name="msg" tag="div">
-        <div v-for="(msg, i) in messages" :key="i" :class="['msg-row', msg.role]">
+        <div v-for="msg in messages" :key="msg.id" :class="['msg-row', msg.role]">
           <div v-if="msg.role === 'assistant'" class="ai-avatar">
             <div class="ai-avatar-ring" />
             <div class="ai-avatar-bg" />
@@ -149,16 +149,16 @@
 
           <div class="bubble-wrap">
             <div class="bubble" :class="msg.role">
-              <div class="bubble-text" v-if="!msg.isHtml" style="white-space:pre-wrap">
+              <div class="bubble-text" v-if="msg.role === 'user'" style="white-space:pre-wrap">
                 <img v-if="msg.queryImagePreview" :src="msg.queryImagePreview" style="max-width:120px;border-radius:6px;margin-bottom:4px;display:block" />
-                {{ msg.content }}
+                {{ msg.rawContent ?? msg.content }}
               </div>
-              <div class="bubble-text" v-else-if="msg.isHtml">
+              <div class="bubble-text" v-else>
                 <!-- 知识库流式：首字到达前在同一气泡内显示「思考中」波浪，避免单独第二条空对话框 -->
                 <div v-if="msg._streamThinking" class="typing-bubble stream-thinking-inline">
                   <div class="wave-bar" /><div class="wave-bar" /><div class="wave-bar" />
                 </div>
-                <div v-else v-html="msg.content" />
+                <div v-else v-html="msg.renderedContent || ''" />
               </div>
 
               <!-- Tools -->
@@ -186,18 +186,22 @@
                 </transition>
               </div>
 
-              <!-- Confidence arc -->
-              <div v-if="msg.confidence !== undefined && msg.confidence !== null && msg.role === 'assistant'" class="confidence-row">
-                <svg class="conf-arc" viewBox="0 0 60 34" fill="none">
-                  <path d="M5 30 A25 25 0 0 1 55 30" stroke="rgba(255,255,255,0.08)" stroke-width="5" stroke-linecap="round"/>
-                  <path d="M5 30 A25 25 0 0 1 55 30"
-                    :stroke="confColor(msg.confidence)" stroke-width="5" stroke-linecap="round"
-                    :stroke-dasharray="`${msg.confidence * 78.5} 78.5`" style="transition:stroke-dasharray 1s ease"/>
-                  <text x="30" y="30" text-anchor="middle" font-size="9" :fill="confColor(msg.confidence)" font-weight="700">
-                    {{ Math.round(msg.confidence * 100) }}%
-                  </text>
-                </svg>
-                <span class="conf-label">置信度</span>
+              <!-- Evidence relevance -->
+              <div v-if="msg.role === 'assistant'" class="confidence-row">
+                <template v-if="msg.confidence !== undefined && msg.confidence !== null">
+                  <svg class="conf-arc" viewBox="0 0 60 34" fill="none">
+                    <path d="M5 30 A25 25 0 0 1 55 30" stroke="rgba(255,255,255,0.08)" stroke-width="5" stroke-linecap="round"/>
+                    <path d="M5 30 A25 25 0 0 1 55 30"
+                      :stroke="confColor(msg.confidence)" stroke-width="5" stroke-linecap="round"
+                      :stroke-dasharray="`${msg.confidence * 78.5} 78.5`" style="transition:stroke-dasharray 1s ease"/>
+                    <text x="30" y="30" text-anchor="middle" font-size="9" :fill="confColor(msg.confidence)" font-weight="700">
+                      {{ Math.round(msg.confidence * 100) }}%
+                    </text>
+                  </svg>
+                  <span class="conf-label">证据相关度：{{ relevanceLevel(msg.confidence) }}</span>
+                </template>
+                <span v-else-if="msg.sources?.length" class="conf-label">已找到 {{ msg.sources.length }} 条相关证据</span>
+                <span v-else class="conf-label">证据不足</span>
               </div>
             </div>
             <div class="msg-time">{{ formatTime(msg.timestamp) }}</div>
@@ -281,15 +285,13 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch, onMounted } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { apiService } from '../services/api'
 import { docApi } from '../services/docApi'
-import axios from 'axios'
 import MarkdownIt from 'markdown-it'
 
 const md = new MarkdownIt({ html: false, linkify: true, typographer: true, breaks: true })
-const API = 'http://localhost:8000/api/v1'
 const props = defineProps({ model: { type: String, default: 'qwen3.7-plus' } })
 
 const chatMode = ref('general')
@@ -300,6 +302,23 @@ const inputMessage = ref('')
 const loading = ref(false)
 const inputFocused = ref(false)
 const messagesContainer = ref(null)
+let messageId = 0
+let activeController = null
+let requestToken = 0
+let asyncGeneration = 0
+const nextMessageId = () => ++messageId
+const errorDetail = (e) => {
+  const detail = e?.response?.data?.detail
+  return typeof detail === 'string' ? detail : JSON.stringify(detail || e?.message || '未知错误')
+}
+const cancelActiveRequest = () => {
+  requestToken += 1
+  activeController?.abort()
+  activeController = null
+  if (streamRenderRaf) cancelAnimationFrame(streamRenderRaf)
+  streamRenderRaf = null
+  loading.value = false
+}
 
 // knowledge 模式选项
 const forceMultiDoc = ref(false)
@@ -395,35 +414,45 @@ const setCachedUrl = (ph, url) => {
   } catch {} // sessionStorage 满了也不影响功能
 }
 
-const loadSessions = async () => {
-  if (!selectedCollection.value) return
+const loadSessions = async (generation = asyncGeneration) => {
+  const kbName = selectedCollection.value
+  if (!kbName) return
   try {
-    const res = await docApi.listSessions(selectedCollection.value)
+    const res = await docApi.listSessions(kbName)
+    if (generation !== asyncGeneration || kbName !== selectedCollection.value) return
     sessions.value = res.data.data?.sessions || []
   } catch (e) {
-    console.warn('加载会话列表失败:', e)
+    if (generation === asyncGeneration) console.warn('加载会话列表失败:', e)
   }
 }
 
 const createNewSession = async () => {
-  if (!selectedCollection.value) return
+  if (!selectedCollection.value) return null
+  const generation = asyncGeneration
+  const kbName = selectedCollection.value
   try {
-    const res = await docApi.createSession(selectedCollection.value)
+    const res = await docApi.createSession(kbName)
+    if (generation !== asyncGeneration || kbName !== selectedCollection.value) return null
     const session = res.data.data
     sessions.value.unshift(session)
     await switchSession(session)
+    return session
   } catch (e) {
     ElMessage.error('创建会话失败')
+    return null
   }
 }
 
 const switchSession = async (session) => {
   if (currentSessionId.value === session.id) return
+  cancelActiveRequest()
+  const generation = ++asyncGeneration
   currentSessionId.value = session.id
   messages.value = []
   // 加载历史消息
   try {
     const res = await docApi.getSessionMessages(session.id)
+    if (generation !== asyncGeneration || currentSessionId.value !== session.id) return
     const histMsgs = res.data.data?.messages || []
     if (!histMsgs.length) return
 
@@ -465,6 +494,7 @@ const switchSession = async (session) => {
       } catch {}
     }
 
+    if (generation !== asyncGeneration || currentSessionId.value !== session.id) return
     for (const m of histMsgs) {
       let content = m.content
       // 替换占位符为图片 markdown
@@ -473,15 +503,18 @@ const switchSession = async (session) => {
           if (urlMap[ph]) content = content.split(ph).join(`\n![image](${urlMap[ph]})\n`)
         }
       }
-      // 用户查询图片拼在消息内容前
-      let queryImgHtml = ''
-      if (m.role === 'user' && m.query_image_oss_key && queryImgUrlMap[m.query_image_oss_key]) {
-        queryImgHtml = `<img src="${queryImgUrlMap[m.query_image_oss_key]}" style="max-width:120px;border-radius:6px;margin-bottom:4px;display:block" />`
-      }
+      // 用户查询图片通过 Vue 属性绑定展示，避免拼接 HTML。
+      const queryImagePreview = (
+        m.role === 'user' && m.query_image_oss_key
+          ? queryImgUrlMap[m.query_image_oss_key] || ''
+          : ''
+      )
       messages.value.push({
+        id: nextMessageId(),
         role: m.role,
-        isHtml: m.role === 'assistant' || !!queryImgHtml,
-        content: m.role === 'assistant' ? md.render(content) : (queryImgHtml + content),
+        rawContent: content,
+        renderedContent: m.role === 'assistant' ? md.render(content) : '',
+        queryImagePreview,
         confidence: m.confidence,
         sources: m.sources || [],
         _showSources: false,
@@ -527,7 +560,8 @@ const isMultimodalKb = computed(() => {
   const col = collections.value.find(c => c.name === selectedCollection.value)
   return col?.kb_type === 'multimodal'
 })
-const confColor = (c) => c > 0.7 ? '#2dd4a0' : c > 0.4 ? '#f5c842' : '#f06b6b'
+const confColor = (c) => c >= 0.75 ? '#2dd4a0' : c >= 0.5 ? '#f5c842' : '#f06b6b'
+const relevanceLevel = (c) => c >= 0.75 ? '高' : c >= 0.5 ? '中' : '低'
 const scrollToBottom = () => nextTick(() => {
   if (messagesContainer.value) messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
 })
@@ -559,7 +593,8 @@ const scheduleStreamRender = (assistantIdx, getRawState) => {
     const row = messages.value[assistantIdx]
     if (!row || row.role !== 'assistant') return
     const { streamRaw, imageMap } = getRawState()
-    row.content = md.render(toMarkdownWithImages(streamRaw, imageMap))
+    row.rawContent = streamRaw
+    row.renderedContent = md.render(toMarkdownWithImages(streamRaw, imageMap))
     scrollToBottom()
   })
 }
@@ -568,7 +603,11 @@ const sendMessage = async () => {
   const text = inputMessage.value.trim()
   if (!canSend.value || !text) return
   // 用户消息：若有查询图片，把预览 URL 一起存入消息对象用于实时显示
-  const userMsg = { role: 'user', content: text, timestamp: new Date() }
+  const token = ++requestToken
+  const controller = new AbortController()
+  activeController?.abort()
+  activeController = controller
+  const userMsg = { id: nextMessageId(), role: 'user', rawContent: text, timestamp: new Date() }
   if (queryImagePreview.value) userMsg.queryImagePreview = queryImagePreview.value
   messages.value.push(userMsg)
   inputMessage.value = ''
@@ -582,7 +621,8 @@ const sendMessage = async () => {
         queryImageBase64 = await compressImageToBase64(queryImage.value, 800, 0.7)
       }
       messages.value.push({
-        role: 'assistant', isHtml: true, content: '',
+        id: nextMessageId(),
+        role: 'assistant', rawContent: '', renderedContent: '',
         _streamThinking: true,
         confidence: null, sources: [], _showSources: false, timestamp: new Date(),
       })
@@ -602,11 +642,13 @@ const sendMessage = async () => {
         },
         {
           onMeta: (m) => {
+            if (token !== requestToken) return
             imageMap = m.image_map || {}
             const row = messages.value[assistantIdx]
             if (row) row.sources = [...(m.sources || [])]
           },
           onDelta: (d) => {
+            if (token !== requestToken) return
             streamRaw += d.text || ''
             const row = messages.value[assistantIdx]
             if (row && row._streamThinking && streamRaw.length > 0) {
@@ -615,6 +657,7 @@ const sendMessage = async () => {
             scheduleStreamRender(assistantIdx, rawState)
           },
           onDone: (d) => {
+            if (token !== requestToken) return
             if (streamRenderRaf) {
               cancelAnimationFrame(streamRenderRaf)
               streamRenderRaf = null
@@ -626,49 +669,74 @@ const sendMessage = async () => {
               row._streamThinking = false
               row.confidence = d.confidence
               row.sources = d.sources?.length ? [...d.sources] : row.sources
-              row.content = md.render(toMarkdownWithImages(streamRaw, imageMap))
+              row.rawContent = streamRaw
+              row.renderedContent = md.render(toMarkdownWithImages(streamRaw, imageMap))
             }
           },
           onError: (err) => { throw err },
         },
+        controller.signal,
       )
       clearQueryImage()
     } else {
-      const apiMsgs = messages.value.map(m => ({ role: m.role, content: m.content }))
-      const res = await apiService.chat(apiMsgs, props.model)
+      const apiMsgs = messages.value.map(m => ({ role: m.role, content: m.rawContent ?? m.content ?? '' }))
+      const res = await apiService.chat(apiMsgs, props.model, null, controller.signal)
+      if (token !== requestToken) return
       const last = res.messages?.[res.messages.length - 1]
       const toolsUsed = res.usage?.tools_used || []
+      const rawContent = last?.content || '抱歉，未收到有效回复。'
       messages.value.push({
-        role: 'assistant', isHtml: true,
-        content: md.render(last?.content || '抱歉，未收到有效回复。'),
+        id: nextMessageId(),
+        role: 'assistant', rawContent, renderedContent: md.render(rawContent),
         tools_used: toolsUsed, timestamp: new Date(),
       })
       if (toolsUsed.length) ElMessage.success(`调用工具: ${toolsUsed.join(', ')}`)
     }
   } catch (e) {
+    if (e?.name === 'AbortError' || token !== requestToken) return
     console.error(e); ElMessage.error('发送失败')
     if (chatMode.value === 'knowledge') {
       const last = messages.value[messages.value.length - 1]
       if (last?.role === 'assistant') {
         last._streamThinking = false
-        last.isHtml = false
-        last.content = '抱歉，发生错误，请稍后重试。'
+        last.rawContent = '抱歉，发生错误，请稍后重试。'
+        last.renderedContent = md.render(last.rawContent)
       } else {
-        messages.value.push({ role: 'assistant', content: '抱歉，发生错误，请稍后重试。', timestamp: new Date() })
+        const rawContent = '抱歉，发生错误，请稍后重试。'
+        messages.value.push({ id: nextMessageId(), role: 'assistant', rawContent, renderedContent: md.render(rawContent), timestamp: new Date() })
       }
     } else {
-      messages.value.push({ role: 'assistant', content: '抱歉，发生错误，请稍后重试。', timestamp: new Date() })
+      const rawContent = '抱歉，发生错误，请稍后重试。'
+      messages.value.push({ id: nextMessageId(), role: 'assistant', rawContent, renderedContent: md.render(rawContent), timestamp: new Date() })
     }
-  } finally { loading.value = false; scrollToBottom() }
+  } finally {
+    if (token === requestToken) {
+      activeController = null
+      loading.value = false
+      scrollToBottom()
+    }
+  }
 }
 
-const clearMessages = () => { messages.value = []; currentSessionId.value = '' }
-watch(chatMode, () => { messages.value = []; currentSessionId.value = '' })
-watch(selectedCollection, async (val) => {
+const clearMessages = () => { cancelActiveRequest(); messages.value = []; currentSessionId.value = '' }
+watch(chatMode, () => {
+  cancelActiveRequest()
+  asyncGeneration += 1
   messages.value = []
   currentSessionId.value = ''
+})
+watch(selectedCollection, async (val) => {
+  cancelActiveRequest()
+  const generation = ++asyncGeneration
+  messages.value = []
+  sessions.value = []
+  currentSessionId.value = ''
   clearQueryImage()
-  if (val) await loadSessions()
+  if (!val) return
+  await loadSessions(generation)
+  if (generation !== asyncGeneration || val !== selectedCollection.value) return
+  if (sessions.value.length) await switchSession(sessions.value[0])
+  else await createNewSession()
 })
 const formatTime = (t) => new Date(t).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 const uniqueFileNames = (sources) => {
@@ -682,13 +750,15 @@ const uniqueFileNames = (sources) => {
 
 onMounted(async () => {
   try {
-    const { data } = await axios.get(`${API}/admin/collections`)
-    collections.value = data.data?.collections || []
-    if (collections.value.length > 0) {
-      selectedCollection.value = collections.value[0].name
-      await loadSessions()
-    }
+    const res = await docApi.listCollections()
+    collections.value = res.data.data?.collections || []
+    if (collections.value.length > 0) selectedCollection.value = collections.value[0].name
   } catch {}
+})
+onUnmounted(() => {
+  cancelActiveRequest()
+  asyncGeneration += 1
+  window.removeEventListener('keydown', onKeydown)
 })
 defineExpose({ clearMessages })
 </script>

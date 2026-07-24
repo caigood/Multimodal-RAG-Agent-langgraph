@@ -18,13 +18,13 @@
             size="small" type="success"
             :loading="upserting"
             @click="batchUpsert(selectedJobIds)"
-          >⬆️ 上传选中 ({{ selectedJobIds.length }})</el-button>
+          >向量化选中 ({{ selectedJobIds.length }})</el-button>
           <el-button
             size="small" type="success" plain
             :loading="upserting"
             :disabled="uploadableJobIds.length === 0"
             @click="batchUpsert(uploadableJobIds)"
-          >⬆️ 一键全部上传 ({{ uploadableJobIds.length }})</el-button>
+          >一键全部向量化 ({{ uploadableJobIds.length }})</el-button>
         </template>
         <el-button
           v-if="selectedJobIds.length > 0"

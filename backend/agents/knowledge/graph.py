@@ -1,148 +1,138 @@
 # -*- coding: utf-8 -*-
 """
-Knowledge Agent Graph Definition
-Defines the complete RAG workflow using LangGraph
+整体架构::
 
-Workflow:
-  START
-    ↓
-  query_rewrite          - 改写用户提问
-    ↓
-  query_classify         - 判断 single_doc / multi_doc
-    ↓
-  determine_retrieval_strategy  - 判断 keyword / hybrid
-    │
-    ▼
-  graph_retrieve         - Neo4j 知识图谱检索
-    │
-    ▼
-  ┌── route_by_query_type ──┐   （single vs multi 条件分支）
-  │                         │
-  ▼                         ▼
-  single_doc_retrieve       multi_doc_retrieve
-  │  Milvus RRF hybrid      │  Milvus RRF hybrid（分组搜索）
-  │                         │
-  ▼                         ▼
-                             filter_chunks
-                             │
-  └─────────────────────────┘
-                  │
-                  ▼
-              select_top_k_chunks  ← 排序/rerank（两路径共用）
-                  │
-                  ▼
-              generate_answer  ← 读取 merged_chunks + kg_graph_chunks
-                  │               → 分节 prompt（向量 / 图谱）
-  ┌── should_check_quality ──┐
-  │                          │
-  ▼                          ▼
-  check_quality              (skip)
-  │
-  ▼
-  finalize_metrics
-    ↓
-  END
+    START
+      ↓
+    analyze_query
+      ↓
+    determine_retrieval_strategy
+      ↓
+    graph_retrieve
+      ├──────────────────────────────┐
+      ↓                              ↓
+    kg_enabled = true              kg_enabled = false
+      ↓                              ↓
+    查询 Neo4j                     跳过图谱查询
+      ↓                              ↓
+    写入 kg_graph_chunks           清空 kg_graph_chunks
+      └──────────────────────────────┘
+                      ↓
+              route_by_query_type
+      ┌──────────────────────────────┴──────────────────────────────┐
+      ↓                                                             ↓
+    query_type = single_doc                                       query_type = multi_doc
+      ↓                                                             ↓
+    single_doc_retrieve                                           multi_doc_retrieve
+      ↓                                                             ↓
+    select_top_k_chunks                                           filter_chunks
+                                                                    ↓
+                                                                  select_top_k_chunks
+      └──────────────────────────────┬──────────────────────────────┘
+                                     ↓
+                             retrieval_quality
+      ┌──────────────────────────────┼────────────────────────────────────┐
+      ↓                              ↓                                    ↓
+    检索通过                   检索失败且仍有重试预算              检索失败且重试预算耗尽
+      ↓                              ↓                                    ↓
+    generate_answer                rewrite_retrieval_query               fallback_answer
+      ↓                              ↓                                    ↓
+    finalize_metrics              清空上一轮检索和生成结果               finalize_metrics
+      ↓                              ↓                                    ↓
+    END                           仅更新 search_query                    END
+                                     ↓
+                                 graph_retrieve
+                                     ↓
+                         重新执行图谱开关判断
+                                     ↓
+                         route_by_query_type
+                                     ↓
+                     重新执行检索、筛选和 retrieval_quality
+
+状态不变量：
+- graph_retrieve 是固定流程节点，但只有 kg_enabled=true 时才查询 Neo4j；关闭时立即跳过。
+- 检索失败最多按 config.max_retrieval_retries 重试（当前配置范围 0..2）。
+- 二次检索从 rewrite_retrieval_query 明确回到 graph_retrieve，随后重新执行完整检索链路。
+- 二次检索会清空上一轮检索结果和生成结果。
+- fallback_answer 是检索质量失败后的唯一用户出口。
+- 图谱证据与向量证据去重后共同参与检索门控。
+- rerank 分数只评价向量检索结果。
+- 首次和二次图谱检索都严格服从 config.kg_enabled；关闭后不会因重试自动开启。
 """
 
-from langgraph.graph import StateGraph, START, END
-from typing import Literal, Optional, List
+from typing import List, Literal, Optional
+
+from langgraph.graph import END, START, StateGraph
 
 from .state import KnowledgeAgentState
 from .nodes import (
-    query_rewrite,
-    query_classify,
+    analyze_query,
+    check_retrieval_quality,
     determine_retrieval_strategy,
-    graph_retrieve,
-    single_doc_retrieve,
-    multi_doc_retrieve,
+    fallback_answer,
     filter_chunks,
-    select_top_k_chunks,
-    generate_answer,
-    check_quality,
     finalize_metrics,
+    generate_answer,
+    graph_retrieve,
+    multi_doc_retrieve,
+    rewrite_retrieval_query,
+    select_top_k_chunks,
+    single_doc_retrieve,
 )
 
 
 def route_by_query_type(state: KnowledgeAgentState) -> Literal["single_doc_retrieve", "multi_doc_retrieve"]:
-    """根据 query_type 路由到不同检索节点"""
+    """按分类节点写入的 query_type 选择单文档或多文档检索；不消耗任何重试预算。"""
     return "single_doc_retrieve" if state.get("query_type") == "single_doc" else "multi_doc_retrieve"
 
 
-def should_check_quality(state: KnowledgeAgentState) -> Literal["check_quality", "finalize_metrics"]:
+def route_retrieval_quality(state: KnowledgeAgentState) -> Literal["generate_answer", "rewrite_retrieval_query", "fallback_answer"]:
+    """检索门控通过则生成；失败且检索预算未尽则改写重检，否则进入唯一 fallback 出口。"""
+    if state.get("retrieval_quality_passed"):
+        return "generate_answer"
     config = state["config"]
-    return "check_quality" if config.enable_fallback else "finalize_metrics"
+    if state.get("retrieval_retry_count", 0) < config.max_retrieval_retries:
+        return "rewrite_retrieval_query"
+    return "fallback_answer"
 
 
 def create_knowledge_agent(checkpointer=None, interrupt_before: Optional[List[str]] = None):
-    """
-    创建 Knowledge Agent
-
-    Args:
-        checkpointer: LangGraph checkpointer（AsyncPostgresSaver 或 MemorySaver）
-        interrupt_before: 若包含 'generate_answer'，则 ainvoke 在生成前暂停，供 OpenAI 兼容流式补全后 aupdate_state + 二次 ainvoke 恢复
-    Returns:
-        Compiled LangGraph agent
-    """
-    print("\n[Graph] Building Knowledge Agent")
-
+    """装配并编译检索门控图；所有成功/失败路径最终经 finalize_metrics 到 END。"""
     builder = StateGraph(KnowledgeAgentState)
+    for name, node in (
+        ("analyze_query", analyze_query),
+        ("determine_retrieval_strategy", determine_retrieval_strategy),
+        ("graph_retrieve", graph_retrieve),
+        ("single_doc_retrieve", single_doc_retrieve),
+        ("multi_doc_retrieve", multi_doc_retrieve),
+        ("filter_chunks", filter_chunks),
+        ("select_top_k_chunks", select_top_k_chunks),
+        ("retrieval_quality", check_retrieval_quality),
+        ("rewrite_retrieval_query", rewrite_retrieval_query),
+        ("generate_answer", generate_answer),
+        ("fallback_answer", fallback_answer),
+        ("finalize_metrics", finalize_metrics),
+    ):
+        builder.add_node(name, node)
 
-    # ── 节点 ──────────────────────────────────────────────────────────────────
-    builder.add_node("query_rewrite", query_rewrite)
-    builder.add_node("query_classify", query_classify)
-    builder.add_node("determine_retrieval_strategy", determine_retrieval_strategy)
-    builder.add_node("graph_retrieve", graph_retrieve)
-    builder.add_node("single_doc_retrieve", single_doc_retrieve)
-    builder.add_node("multi_doc_retrieve", multi_doc_retrieve)
-    builder.add_node("filter_chunks", filter_chunks)
-    builder.add_node("select_top_k_chunks", select_top_k_chunks)
-    builder.add_node("generate_answer", generate_answer)
-    builder.add_node("check_quality", check_quality)
-    builder.add_node("finalize_metrics", finalize_metrics)
-
-    # ── 边 ───────────────────────────────────────────────────────────────────
-    builder.add_edge(START, "query_rewrite")
-    builder.add_edge("query_rewrite", "query_classify")
-    builder.add_edge("query_classify", "determine_retrieval_strategy")
-    # 知识图谱检索：每次都走，kg_enabled=false 时节点内跳过
+    builder.add_edge(START, "analyze_query")
+    builder.add_edge("analyze_query", "determine_retrieval_strategy")
     builder.add_edge("determine_retrieval_strategy", "graph_retrieve")
-
-    # 条件路由：single vs multi（检索后与图谱结果汇聚）
-    builder.add_conditional_edges(
-        "graph_retrieve",
-        route_by_query_type,
-        {
-            "single_doc_retrieve": "single_doc_retrieve",
-            "multi_doc_retrieve": "multi_doc_retrieve",
-        }
-    )
-
-    # single_doc 路径：Milvus RRF hybrid → select_top_k / rerank → generate
+    builder.add_conditional_edges("graph_retrieve", route_by_query_type)
     builder.add_edge("single_doc_retrieve", "select_top_k_chunks")
-
-    # multi_doc 路径：score 过滤 → rerank → generate
     builder.add_edge("multi_doc_retrieve", "filter_chunks")
     builder.add_edge("filter_chunks", "select_top_k_chunks")
-    builder.add_edge("select_top_k_chunks", "generate_answer")
+    builder.add_edge("select_top_k_chunks", "retrieval_quality")
+    builder.add_conditional_edges("retrieval_quality", route_retrieval_quality)
 
-    builder.add_conditional_edges(
-        "generate_answer",
-        should_check_quality,
-        {
-            "check_quality": "check_quality",
-            "finalize_metrics": "finalize_metrics",
-        }
-    )
-
-    builder.add_edge("check_quality", "finalize_metrics")
+    # 二次检索显式重新走 graph_retrieve、single/multi、rerank 与检索门控；
+    # graph_retrieve 仍严格检查 config.kg_enabled，不会在二次检索时自动开启图谱。
+    builder.add_edge("rewrite_retrieval_query", "graph_retrieve")
+    builder.add_edge("generate_answer", "finalize_metrics")
+    builder.add_edge("fallback_answer", "finalize_metrics")
     builder.add_edge("finalize_metrics", END)
 
     compile_kw = {"checkpointer": checkpointer}
     if interrupt_before:
         compile_kw["interrupt_before"] = interrupt_before
-    graph = builder.compile(**compile_kw)
-
-    print("[Graph] Knowledge Agent created")
-    print("[Graph] path: rewrite→classify→strategy→graph_retrieve→{single|multi}_retrieve→generate")
-
-    return graph
+    return builder.compile(**compile_kw)

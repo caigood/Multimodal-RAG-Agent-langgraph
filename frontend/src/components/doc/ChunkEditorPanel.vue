@@ -1,7 +1,6 @@
 <template>
   <div>
     <!-- 操作栏 -->
-    <el-icon v-show="false"><Loading /></el-icon>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div>
         <el-tag type="info">共 {{ chunks.length }} 个切片</el-tag>
@@ -10,7 +9,6 @@
       <div style="display:flex;gap:8px">
         <el-button v-if="!props.readonly" size="small" @click="load" :loading="loading">刷新</el-button>
         <template v-if="!props.readonly">
-          <el-button size="small" @click="fetchChunks" :loading="fetching">重新获取切片</el-button>
           <el-button size="small" type="warning" @click="cleanAll" :loading="cleaningAll">批量清洗</el-button>
           <el-button size="small" type="danger" plain @click="revertAll">全部还原</el-button>
           <el-button size="small" type="success" @click="upsert" :loading="upserting">确认上传向量库</el-button>
@@ -18,11 +16,7 @@
       </div>
     </div>
 
-    <el-empty v-if="!loading && !fetching && chunks.length === 0" description="暂无切片数据，请确认 Job 已完成后重新获取" />
-    <div v-if="fetching && chunks.length === 0" style="text-align:center;padding:40px;color:#909399">
-      <el-icon class="is-loading" style="font-size:24px"><Loading /></el-icon>
-      <div style="margin-top:8px">正在从 ADB 拉取切片，请稍候...</div>
-    </div>
+    <el-empty v-if="!loading && chunks.length === 0" description="暂无切片数据" />
 
     <el-table v-else :data="paged" v-loading="loading" style="width:100%" max-height="560" stripe border>
       <el-table-column type="index" label="#" width="55" align="center"
@@ -173,7 +167,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Loading, Plus } from '@element-plus/icons-vue'
+import { Plus } from '@element-plus/icons-vue'
 import { docApi } from '@/services/docApi'
 
 const props = defineProps({
@@ -185,7 +179,6 @@ const emit = defineEmits(['vectorized'])
 
 const chunks = ref([])
 const loading = ref(false)
-const fetching = ref(false)
 const cleaningAll = ref(false)
 const upserting = ref(false)
 const currentPage = ref(1)
@@ -531,17 +524,6 @@ const confirmAddImage = async () => {
 
 // ── 切片操作 ──────────────────────────────────────────────────────────────────
 
-const fetchChunks = async () => {
-  fetching.value = true
-  try {
-    const res = await docApi.fetchChunks(props.jobId)
-    ElMessage.success(res.data.message || '切片已获取')
-    await load()
-  } catch (e) {
-    ElMessage.error('获取切片失败: ' + (e.response?.data?.detail || e.message))
-  } finally { fetching.value = false }
-}
-
 const saveOne = async (row) => {
   if (!validatePlaceholders(row)) return
   row._saving = true
@@ -633,12 +615,7 @@ const upsert = async () => {
   } finally { upserting.value = false }
 }
 
-onMounted(async () => {
-  await load()
-  if (!props.readonly && !props.imageMode && chunks.value.length === 0) {
-    await fetchChunks()
-  }
-})
+onMounted(load)
 </script>
 
 <style scoped>

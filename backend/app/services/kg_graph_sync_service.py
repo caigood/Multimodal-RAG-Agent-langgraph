@@ -17,7 +17,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from dashscope import Generation
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, Query
 from neo4j.exceptions import Neo4jError, ServiceUnavailable
 
 from app.core.config import settings
@@ -159,15 +159,16 @@ class KGGraphSyncService:
             triples = [dict(r) for r in rows]
         return {"job_id": job_id, "kb_name": kb_name, "triples": triples, "total": len(triples)}
 
-    def search_related_chunks(self, kb_name: str, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    def search_related_chunks(
+        self, kb_name: str, query: str, top_k: int = 5, timeout: float = 2.0
+    ) -> List[Dict[str, Any]]:
         """根据问题中的实体/关键词，从 Neo4j 找到相关关系证据和 chunk_id。"""
         terms = self._extract_query_terms(query)
         if not terms:
             return []
 
-        with self.driver.session(database=self.database) as session:
-            rows = session.run(
-                """
+        cypher = Query(
+            """
                 MATCH (e:KGEntity {kb_name: $kb_name})
                 WHERE any(term IN $terms WHERE
                     toLower(e.name) CONTAINS toLower(term) OR toLower(term) CONTAINS toLower(e.name)
@@ -181,7 +182,12 @@ class KGGraphSyncService:
                        endNode(r).name AS tail
                 ORDER BY r.confidence DESC
                 LIMIT $limit
-                """,
+            """,
+            timeout=timeout,
+        )
+        with self.driver.session(database=self.database) as session:
+            rows = session.run(
+                cypher,
                 kb_name=kb_name,
                 terms=terms,
                 limit=max(top_k * 4, 10),
