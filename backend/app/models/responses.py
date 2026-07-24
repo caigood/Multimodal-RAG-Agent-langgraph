@@ -42,7 +42,7 @@ class KnowledgeResponse(BaseModel):
     
     # 回答内容
     answer: str
-    confidence: float
+    confidence: Optional[float]
     sources: List[Dict[str, Any]]
     model: str
     

@@ -5,8 +5,9 @@ Multimodal Retrieve Node - 多模态知识库检索
 用户可同时传文字和图片查询，图片向量加入 image_dense 路。
 """
 import logging
+from dataclasses import replace
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from ..state import KnowledgeAgentState, RetrievalStrategy
 from app.services.milvus_service import get_milvus_service
@@ -28,15 +29,17 @@ def multimodal_retrieve(
     start_time = datetime.now()
 
     try:
-        query = state["rewritten_query"]
+        query = state["search_query"]
         _cfg = state.get("config")
         collection = _cfg.collection if _cfg else None
         retrieval_strategy = state.get("retrieval_strategy", RetrievalStrategy.HYBRID)
 
-        ranker         = _cfg.ranker              if _cfg else "RRF"
-        rrf_k          = _cfg.rrf_k               if _cfg else 60
-        top_k          = _cfg.multi_doc_top_k      if _cfg else 20
-        keyword_filter = _cfg.keyword_filter       if _cfg else None
+        rrf_k = _cfg.rrf_k if _cfg else 60
+        is_multi_doc = state.get("query_type") == "multi_doc"
+        top_k = (
+            _cfg.multi_doc_top_k if is_multi_doc else _cfg.single_doc_top_k
+        ) if _cfg else 20
+        keyword_filter = _cfg.keyword_filter if _cfg else None
         query_image_url = getattr(_cfg, "query_image_url", None)
         # image_vector_dim 与 kb.vector_dim 在创建时已强制对齐
         image_vector_dim = getattr(_cfg, "image_vector_dim", 1024)
@@ -78,7 +81,6 @@ def multimodal_retrieve(
                 query=query,
                 top_k=top_k,
                 keyword_filter=keyword_filter or query,
-                ranker=ranker,
                 rrf_k=rrf_k,
                 query_image_vector=query_image_vector,
                 query_text_vector=query_text_vector,
@@ -88,7 +90,6 @@ def multimodal_retrieve(
                 collection_name=collection,
                 query=query,
                 top_k=top_k,
-                ranker=ranker,
                 rrf_k=rrf_k,
                 group_by_field=group_by_field,
                 group_size=group_size,
@@ -100,27 +101,20 @@ def multimodal_retrieve(
         duration = (datetime.now() - start_time).total_seconds() * 1000
         logger.info(f"[MultimodalRetrieve] 完成 ({duration:.0f}ms): {len(chunks)} 条")
 
-        metrics = state["metrics"]
-        metrics.retrieval_duration_ms = duration
-        metrics.total_chunks_retrieved = len(chunks)
+        metrics = replace(
+            state["metrics"],
+            retrieval_duration_ms=duration,
+            total_chunks_retrieved=len(chunks),
+        )
 
         return {
             "merged_chunks": chunks,
-            "total_candidates": len(chunks),
-            "retrieval_strategy_used": retrieval_strategy,
             "metrics": metrics,
-            "processing_log": [{
-                "stage": "multimodal_retrieve",
-                "duration_ms": duration,
-                "chunks_count": len(chunks),
-                "has_image_query": bool(query_image_url),
-            }],
         }
 
     except Exception as e:
         logger.error(f"[MultimodalRetrieve] 检索失败: {e}", exc_info=True)
         return {
             "merged_chunks": [],
-            "total_candidates": 0,
             "all_errors": [f"多模态检索失败: {e}"],
         }

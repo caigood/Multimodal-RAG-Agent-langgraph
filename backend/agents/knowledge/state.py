@@ -4,7 +4,7 @@ Knowledge Base QA Agent State Definition
 只保留当前 LangGraph 工作流实际读写的状态字段。
 """
 
-from typing_extensions import TypedDict, NotRequired
+from typing_extensions import TypedDict
 from typing import List, Dict, Any, Optional, Annotated
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,13 +22,6 @@ class RetrievalStrategy(str, Enum):
     HYBRID = "hybrid"
 
 
-class AnswerQuality(str, Enum):
-    """答案质量等级"""
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
 @dataclass
 class RAGConfig:
     """RAG pipeline configuration"""
@@ -39,12 +32,10 @@ class RAGConfig:
     vector_score_threshold: float = 0.0
     llm_context_top_k: int = 10
 
-    # Qwen3-Rerank 配置
+    # Rerank 配置
     rerank_enabled: bool = False
-    rerank_model_name: str = "qwen3-rerank"
     single_doc_rerank_top_k: int = 5
     multi_doc_rerank_top_k: int = 10
-    ranker: str = "RRF"
     rrf_k: int = 60
 
     # Multi-doc retrieval
@@ -73,9 +64,10 @@ class RAGConfig:
     kg_top_k: int = 5
     kg_timeout_seconds: float = 2.0
 
-    # Quality control
-    min_confidence_threshold: float = 0.6
-    enable_fallback: bool = True
+    # 检索质量门控
+    retrieval_quality_enabled: bool = True
+    retrieval_quality_threshold: float = 0.35
+    max_retrieval_retries: int = 1
     fallback_message: str = "抱歉，我无法找到相关信息。"
 
     # Knowledge base
@@ -99,7 +91,6 @@ class PerformanceMetrics:
     total_chunks_retrieved: int = 0
     chunks_after_filter: int = 0
     chunks_after_rerank: int = 0
-    answer_quality: Optional[AnswerQuality] = None
     confidence_score: float = 0.0
     estimated_cost: float = 0.0
 
@@ -110,10 +101,11 @@ class KnowledgeAgentState(TypedDict):
     # Conversation Memory
     messages: Annotated[List[BaseMessage], add_messages]
 
-    # Input
-    query: str
+    # Input / query analysis
     original_query: str
-    rewritten_query: Optional[str]
+    needs_rewrite: bool
+    standalone_query: str
+    search_query: str
 
     # Configuration
     config: RAGConfig
@@ -121,88 +113,67 @@ class KnowledgeAgentState(TypedDict):
     # Query Processing
     query_type: Optional[str]
     retrieval_strategy: Optional[RetrievalStrategy]
-    retrieval_strategy_reason: Optional[str]
 
     # Knowledge graph retrieval
     kg_graph_chunks: List[Dict[str, Any]]
 
     # Retrieval / filtering / rerank
     merged_chunks: List[Dict[str, Any]]
-    retrieval_strategy_used: Optional[RetrievalStrategy]
-    total_candidates: int
     filtered_chunks: List[Dict[str, Any]]
     reranked_chunks: List[Dict[str, Any]]
 
     # Generation output
-    context: str
     sources: List[Dict[str, Any]]
     answer: str
-    confidence: float
+    confidence: Optional[float]
     image_map: Optional[Dict[str, str]]
-    tools_used: NotRequired[List[str]]
 
-    # SSE 流式：在 interrupt_before generate 之后由服务层写入
-    precomputed_answer: NotRequired[Optional[str]]
-
-    # Quality Control
-    answer_quality: Optional[AnswerQuality]
-    quality_passed: bool
-    quality_issues: List[str]
-    used_fallback: bool
-    fallback_reason: Optional[str]
+    # Retrieval Quality Control / Retry
+    retrieval_quality_passed: bool
+    retrieval_quality_score: Optional[float]
+    retrieval_quality_issues: List[str]
+    retrieval_retry_reason: Optional[str]
+    retrieval_retry_count: int
 
     # Monitoring
     metrics: PerformanceMetrics
 
-    # Error Handling
-    error: Optional[str]
-    error_stage: Optional[str]
-
     # Accumulated Data (with Reducers)
     all_errors: Annotated[List[str], operator.add]
     all_warnings: Annotated[List[str], operator.add]
-    processing_log: Annotated[List[Dict[str, Any]], operator.add]
 
 
 def create_initial_state(
     query: str,
-    user_id: str,
-    session_id: str,
     config: Optional[RAGConfig] = None,
     messages: Optional[List[BaseMessage]] = None,
 ) -> KnowledgeAgentState:
-    """Create initial state for RAG pipeline."""
+    """创建工作流初始状态；仅注入查询、配置和可选普通对话历史，其余流水线字段归零。"""
     from langchain_core.messages import HumanMessage
 
     return {
         "messages": messages or [HumanMessage(content=query)],
-        "query": query,
         "original_query": query,
-        "rewritten_query": None,
+        "needs_rewrite": False,
+        "standalone_query": query,
+        "search_query": query,
         "config": config or RAGConfig(vector_score_threshold=settings.vector_score_threshold),
         "query_type": None,
         "retrieval_strategy": None,
-        "retrieval_strategy_reason": None,
         "kg_graph_chunks": [],
         "merged_chunks": [],
-        "retrieval_strategy_used": None,
-        "total_candidates": 0,
         "filtered_chunks": [],
         "reranked_chunks": [],
-        "context": "",
         "sources": [],
         "answer": "",
-        "confidence": 0.0,
+        "confidence": None,
         "image_map": None,
-        "answer_quality": None,
-        "quality_passed": False,
-        "quality_issues": [],
-        "used_fallback": False,
-        "fallback_reason": None,
+        "retrieval_quality_passed": False,
+        "retrieval_quality_score": None,
+        "retrieval_quality_issues": [],
+        "retrieval_retry_reason": None,
+        "retrieval_retry_count": 0,
         "metrics": PerformanceMetrics(start_time=datetime.now()),
-        "error": None,
-        "error_stage": None,
         "all_errors": [],
         "all_warnings": [],
-        "processing_log": [],
     }

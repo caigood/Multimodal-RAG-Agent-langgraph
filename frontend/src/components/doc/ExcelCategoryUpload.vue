@@ -167,7 +167,7 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { docApi } from '@/services/docApi'
 
-const emit = defineEmits(['uploaded', 'go-categories'])
+defineEmits(['go-categories'])
 
 const props = defineProps({
   collection: { type: String, default: '' },
@@ -330,7 +330,6 @@ const submitChunking = async () => {
       ElMessage.info(res.data.message)
     } else {
       ElMessage.success(`已提交 ${submitted} 个 Excel 文件切分任务`)
-      emit('uploaded', res.data.data)
     }
     if (errors?.length) ElMessage.warning(`${errors.length} 个文件提交失败`)
     dialogVisible.value = false

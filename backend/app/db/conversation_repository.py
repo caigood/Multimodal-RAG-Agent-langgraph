@@ -106,6 +106,42 @@ class ConversationRepository(BaseRepository):
         )
         return [self._norm_message(r) for r in rows]
 
+    def add_exchange(
+        self, *, session_id: str, query: str, answer: str, sources: list,
+        confidence: Optional[float], image_placeholders: List[str],
+        query_image_oss_key: Optional[str],
+    ) -> bool:
+        """以单条 PostgreSQL 语句原子写入一轮问答并更新会话时间。"""
+        rows = self._execute_returning(
+            """
+            WITH inserted_user AS (
+                INSERT INTO conversation_message
+                    (session_id, role, content, sources, confidence, image_placeholders, query_image_oss_key)
+                VALUES (%s, 'user', %s, '[]'::jsonb, NULL, '{}', %s)
+                RETURNING session_id
+            ), inserted_assistant AS (
+                INSERT INTO conversation_message
+                    (session_id, role, content, sources, confidence, image_placeholders)
+                SELECT session_id, 'assistant', %s, %s::jsonb, %s, %s
+                FROM inserted_user
+                RETURNING session_id
+            )
+            UPDATE conversation_session SET updated_at = NOW()
+            WHERE id IN (SELECT session_id FROM inserted_assistant)
+            RETURNING id
+            """,
+            (session_id, query, query_image_oss_key, answer, json.dumps(sources or []),
+             confidence, image_placeholders or []),
+        )
+        return bool(rows)
+
+    def is_query_image_referenced(self, oss_key: str) -> bool:
+        rows = self._execute_select(
+            "SELECT 1 FROM conversation_message WHERE query_image_oss_key = %s LIMIT 1",
+            (oss_key,),
+        )
+        return bool(rows)
+
     def get_image_placeholders_by_session(self, session_id: str) -> List[str]:
         """收集会话内所有消息的占位符，用于批量 resolve"""
         rows = self._execute_select(

@@ -19,7 +19,7 @@ async def root():
         "message": SuccessMessages.API_READY,
         "version": settings.api_version,
         "architecture": "Solution 3: Complete Knowledge Agent with Full Workflow",
-        "workflow": "query_analysis → retrieve → filter → rerank → generate → quality_check → metrics",
+        "workflow": "analyze_query → retrieve → filter → rerank → generate → quality_check → metrics",
         "models": list(SUPPORTED_MODELS.keys()),
         "default_model": settings.default_model,
         "mcp_tools": ["send_email", "web_search", "query_database"],

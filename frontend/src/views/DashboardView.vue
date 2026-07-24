@@ -74,7 +74,6 @@
               </div>
               <div class="col-tags">
                 <span v-if="col.image_mode" class="mini-tag purple">图文</span>
-                <span class="mini-tag blue">{{ col.metrics || 'cosine' }}</span>
               </div>
             </div>
             <div v-if="collections.length === 0" class="empty-state">
@@ -131,13 +130,12 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { Search, Cpu, DataAnalysis, FolderOpened, ChatDotRound, Setting, ArrowRight } from '@element-plus/icons-vue'
-import axios from 'axios'
+import api from '../services/api'
 import MarkdownIt from 'markdown-it'
 
 const emit = defineEmits(['navigate'])
 const props = defineProps({ currentModel: { type: String, default: '' } })
 const md = new MarkdownIt({ breaks: true, linkify: true })
-const API = 'http://localhost:8000/api/v1'
 
 const searchQuery = ref('')
 const searchFocused = ref(false)
@@ -174,7 +172,7 @@ const handleSearch = async () => {
   searching.value = true
   aiAnswer.value = ''
   try {
-    const res = await axios.post(`${API}/knowledge/`, { query: searchQuery.value, session_id: 'dashboard' })
+    const res = await api.post('/knowledge/', { query: searchQuery.value, session_id: 'dashboard' })
     aiAnswer.value = md.render(res.data?.answer || '未找到相关内容')
   } catch {
     aiAnswer.value = md.render('暂时无法连接知识库，请稍后重试。')
@@ -186,8 +184,8 @@ const handleSearch = async () => {
 onMounted(async () => {
   try {
     const [colRes, healthRes] = await Promise.allSettled([
-      axios.get(`${API}/admin/collections`),
-      axios.get(`${API}/health`),
+      api.get('/admin/collections'),
+      api.get('/health'),
     ])
     if (colRes.status === 'fulfilled') {
       collections.value = colRes.value.data?.data?.collections || []
@@ -202,7 +200,7 @@ onMounted(async () => {
       stats.value[3].value = props.currentModel || h?.default_model || '—'
     }
     try {
-      const catRes = await axios.get(`${API}/categories`)
+      const catRes = await api.get('/categories')
       stats.value[1].value = catRes.data?.data?.total ?? '—'
     } catch {}
   } catch {}

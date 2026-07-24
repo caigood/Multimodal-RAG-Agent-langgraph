@@ -26,7 +26,7 @@ async def get_kb_graph(kb_name: str):
     files_result = file_service.list_files(kb_name, limit=1000)
     synced_files = [
         f for f in files_result.get("files", [])
-        if f.get("sync_graph") and f.get("job")
+        if f.get("graph_sync_status") == "synced" and f.get("job")
     ]
 
     if not synced_files:

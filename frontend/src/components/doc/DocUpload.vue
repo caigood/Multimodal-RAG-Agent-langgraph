@@ -25,16 +25,6 @@
                   <div class="tip">图片 DPI</div>
                 </el-col>
               </template>
-              <template v-else>
-                <el-col :span="5">
-                  <el-switch v-model="config.zhTitleEnhance" />
-                  <div class="tip">中文标题加强</div>
-                </el-col>
-                <el-col :span="5">
-                  <el-switch v-model="config.vlEnhance" />
-                  <div class="tip">VL增强识别</div>
-                </el-col>
-              </template>
             </el-row>
           </el-form-item>
         </el-form>
@@ -172,24 +162,9 @@
 
           <!-- 普通模式专属参数 -->
           <template v-else>
-            <el-form-item label="分词器">
-              <el-select v-model="catConfig.textSplitterName" style="width:320px">
-                <el-option label="ChineseRecursiveTextSplitter（中文推荐）" value="ChineseRecursiveTextSplitter" />
-                <el-option label="RecursiveCharacterTextSplitter（英文/代码）" value="RecursiveCharacterTextSplitter" />
-                <el-option label="SpacyTextSplitter（英文文档）" value="SpacyTextSplitter" />
-                <el-option label="MarkdownHeaderTextSplitter（Markdown）" value="MarkdownHeaderTextSplitter" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="中文标题加强">
-              <el-switch v-model="catConfig.zhTitleEnhance" />
-            </el-form-item>
             <el-form-item label="Excel 每片行数">
               <el-input-number v-model="catConfig.excelRowsPerChunk" :min="1" :max="5000" :step="10" style="width:160px" />
               <span class="tip" style="margin-left:8px">Excel 文件每个切片的数据行数，默认 50</span>
-            </el-form-item>
-            <el-form-item label="VL增强识别">
-              <el-switch v-model="catConfig.vlEnhance" />
-              <span class="tip" style="margin-left:8px">适用于排版混乱的复杂文档，处理较慢</span>
             </el-form-item>
             <el-form-item label="Metadata">
               <el-tag type="info" size="small">自动注入</el-tag>
@@ -242,7 +217,6 @@
     <el-tab-pane label="📊 Excel 类目上传" name="excel">
       <ExcelCategoryUpload
         :collection="collection"
-        @uploaded="$emit('uploaded', $event)"
         @go-categories="$emit('go-categories')"
       />
     </el-tab-pane>
@@ -254,10 +228,11 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, QuestionFilled } from '@element-plus/icons-vue'
+import { API_BASE } from '@/services/api'
 import { docApi } from '@/services/docApi'
 import ExcelCategoryUpload from './ExcelCategoryUpload.vue'
 
-const emit = defineEmits(['open-jobs', 'uploaded', 'go-categories'])
+const emit = defineEmits(['go-categories'])
 
 const props = defineProps({
   collection: { type: String, default: '' },
@@ -280,8 +255,6 @@ const syncGraphCat = ref(false)
 const config = ref({
   chunkSize: 800,
   chunkOverlap: 100,
-  zhTitleEnhance: true,
-  vlEnhance: false,
   imageDpi: 150,
 })
 
@@ -303,13 +276,13 @@ const submitImageUpload = async () => {
     fd.append('chunk_size', config.value.chunkSize)
     fd.append('chunk_overlap', config.value.chunkOverlap)
     fd.append('image_dpi', config.value.imageDpi)
+    fd.append('sync_graph', syncGraph.value)
     if (props.collection) fd.append('kb_name', props.collection)
     const res = await docApi.uploadDocument(fd)
     if (res.data.success) {
       ElMessage.success(res.data.message || '上传成功')
       imageSelectedFile.value = null
       imageUploadRef.value?.clearFiles()
-      emit('uploaded', res.data.data)
     }
   } catch (e) {
     const detail = e.response?.data?.detail
@@ -323,24 +296,17 @@ const submitImageUpload = async () => {
 const catConfig = ref({
   chunkSize: 800,
   chunkOverlap: 100,
-  textSplitterName: 'ChineseRecursiveTextSplitter',
-  zhTitleEnhance: true,
-  vlEnhance: false,
   imageDpi: 150,
   excelRowsPerChunk: 50,
 })
 
-const uploadUrl = computed(() => {
-  const base = 'http://localhost:8000/api/v1/documents/upload'
-  return props.collection ? `${base}?collection=${encodeURIComponent(props.collection)}` : base
-})
+const uploadUrl = computed(() => `${API_BASE}/documents/upload`)
 
 const uploadData = computed(() => ({
   chunk_size: config.value.chunkSize,
   chunk_overlap: config.value.chunkOverlap,
-  zh_title_enhance: config.value.zhTitleEnhance,
-  vl_enhance: config.value.vlEnhance,
   sync_graph: syncGraph.value,
+  ...(props.collection && { kb_name: props.collection }),
 }))
 
 const loadCategories = async () => {
@@ -386,7 +352,6 @@ const beforeUpload = (file) => {
 const onSingleSuccess = (response, file) => {
   if (response.success) {
     ElMessage.success(`${file.name} 上传成功，请在文件列表查看进度`)
-    emit('uploaded', response.data)
   } else {
     ElMessage.error(`${file.name} 上传失败: ` + (response.message || '未知错误'))
   }
@@ -409,9 +374,6 @@ const startChunking = async () => {
       kb_name: col,
       chunk_size: catConfig.value.chunkSize,
       chunk_overlap: catConfig.value.chunkOverlap,
-      text_splitter_name: catConfig.value.textSplitterName,
-      zh_title_enhance: catConfig.value.zhTitleEnhance,
-      vl_enhance: catConfig.value.vlEnhance,
       image_dpi: catConfig.value.imageDpi,
       sync_graph: syncGraphCat.value,
       excel_rows_per_chunk: catConfig.value.excelRowsPerChunk,
@@ -422,7 +384,6 @@ const startChunking = async () => {
       ElMessage.info(res.data.message)
     } else {
       ElMessage.success(`已提交 ${submitted} 个文件切分任务`)
-      emit('uploaded', res.data.data)
     }
     if (errors?.length) {
       ElMessage.warning(`${errors.length} 个文件提交失败`)

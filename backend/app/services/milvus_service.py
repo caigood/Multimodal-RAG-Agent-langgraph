@@ -279,7 +279,6 @@ class MilvusService:
         query: str,
         top_k: int = 10,
         filter_expr: Optional[str] = None,
-        ranker: str = "RRF",
         rrf_k: int = 60,
         keyword_filter: Optional[str] = None,
         group_by_field: Optional[str] = None,

@@ -5,6 +5,7 @@ Multi Document Retrieve Node - 多文档查询
 """
 
 import logging
+from dataclasses import replace
 from datetime import datetime
 
 from ..state import KnowledgeAgentState, RetrievalStrategy
@@ -31,13 +32,12 @@ def multi_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
     start_time = datetime.now()
     
     try:
-        query = state["rewritten_query"]
+        query = state["search_query"]
         retrieval_strategy = state.get("retrieval_strategy", RetrievalStrategy.HYBRID)
         _cfg = state.get("config")
         collection = _cfg.collection if _cfg else None
 
         # 从 RAGConfig 读检索参数（已由 knowledge_service 从 kb retrieval_config 注入）
-        ranker         = _cfg.ranker              if _cfg else "RRF"
         rrf_k          = _cfg.rrf_k               if _cfg else 60
         top_k          = _cfg.multi_doc_top_k      if _cfg else 20
         group_size     = _cfg.multi_doc_group_size if _cfg else 3
@@ -55,7 +55,7 @@ def multi_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
             )
 
         logger.info(f"[MultiDocRetrieve] 开始多文档检索: {query}")
-        logger.info(f"[MultiDocRetrieve] 检索策略: {retrieval_strategy.value}, ranker={ranker}, top_k={top_k}, group_size={group_size}")
+        logger.info(f"[MultiDocRetrieve] 检索策略: {retrieval_strategy.value}, top_k={top_k}, group_size={group_size}")
         print(f"\n[MultiDocRetrieve] query={query}, strategy={retrieval_strategy}")
         
         # 获取检索服务
@@ -69,7 +69,6 @@ def multi_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
                 top_k=top_k,
                 collection=collection,
                 keyword_filter=keyword_filter,
-                ranker=ranker,
                 rrf_k=rrf_k,
             )
         elif retrieval_strategy == RetrievalStrategy.HYBRID:
@@ -81,7 +80,6 @@ def multi_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
                 group_by_field="file_name",
                 group_size=group_size,
                 strict_group_size=strict_group,
-                ranker=ranker,
                 rrf_k=rrf_k,
             )
         else:
@@ -93,7 +91,6 @@ def multi_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
                 group_by_field="file_name",
                 group_size=group_size,
                 strict_group_size=strict_group,
-                ranker=ranker,
                 rrf_k=rrf_k,
             )
         
@@ -101,30 +98,20 @@ def multi_doc_retrieve(state: KnowledgeAgentState) -> KnowledgeAgentState:
         
         logger.info(f"[MultiDocRetrieve] 检索完成 ({duration:.0f}ms): 找到 {len(chunks)} 个结果")
         
-        # 更新metrics
-        metrics = state["metrics"]
-        metrics.retrieval_duration_ms = duration
-        metrics.total_chunks_retrieved = len(chunks)
-        
+        metrics = replace(
+            state["metrics"],
+            retrieval_duration_ms=duration,
+            total_chunks_retrieved=len(chunks),
+        )
+
         return {
             "merged_chunks": chunks,
-            "total_candidates": len(chunks),
-            "retrieval_strategy_used": retrieval_strategy,
             "metrics": metrics,
-            "processing_log": [{
-                "stage": "multi_doc_retrieve",
-                "duration_ms": duration,
-                "chunks_count": len(chunks),
-                "strategy": retrieval_strategy.value,
-            }],
         }
 
     except Exception as e:
         logger.error(f"[MultiDocRetrieve] 检索失败: {e}", exc_info=True)
         return {
             "merged_chunks": [],
-            "total_candidates": 0,
             "all_errors": [f"多文档检索失败: {e}"],
-            "error": str(e),
-            "error_stage": "multi_doc_retrieve",
         }

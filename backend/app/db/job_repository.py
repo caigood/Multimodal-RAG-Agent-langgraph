@@ -29,6 +29,14 @@ class JobRepository(BaseRepository):
         )
         return self._normalize(rows[0]) if rows else None
 
+    def list_by_file(self, file_id: str) -> List[Dict[str, Any]]:
+        """获取文件的全部 job（按创建时间倒序）。"""
+        rows = self._execute_select(
+            "SELECT * FROM knowledge_job WHERE file_id = %s ORDER BY created_at DESC",
+            (file_id,),
+        )
+        return [self._normalize(row) for row in rows]
+
     def get_by_file(self, file_id: str) -> Optional[Dict[str, Any]]:
         """获取文件最新的 job"""
         rows = self._execute_select(

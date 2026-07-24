@@ -25,22 +25,6 @@
           </el-form-item>
         </el-col>
         <el-col :span="6">
-          <el-form-item label="混合检索">
-            <el-select v-model="form.hybridSearch" style="width:100%">
-              <el-option label="Weight（加权）" value="Weight" />
-              <el-option label="RRF（倒数排序）" value="RRF" />
-              <el-option label="Cascaded（级联）" value="Cascaded" />
-              <el-option label="不使用" value="" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-        <el-col :span="6" v-if="form.hybridSearch === 'Weight'">
-          <el-form-item label="向量权重α">
-            <el-input-number v-model="form.hybridAlpha" :min="0" :max="1" :step="0.1"
-              :precision="1" style="width:100%" />
-          </el-form-item>
-        </el-col>
-        <el-col :span="6">
           <el-form-item label="Rerank">
             <el-switch v-model="form.rerank" active-text="开启" inactive-text="关闭" />
           </el-form-item>
@@ -157,8 +141,6 @@ const defaultForm = () => {
     topK: rc.rerank_enabled
       ? (rc.multi_doc_top_k ?? 20)   // rerank 开启时默认用多文档候选数
       : (rc.llm_context_top_k ?? 10),
-    hybridSearch: rc.ranker ?? 'RRF',
-    hybridAlpha: rc.hybrid_alpha ?? 0.5,
     rerank: rc.rerank_enabled ?? false,
     rerankTopN: rc.multi_doc_rerank_top_k ?? 10,
     keywordFilter: '',
@@ -181,8 +163,6 @@ const searched = ref(false)
     fd.append('query', form.value.query)
     fd.append('collection', props.collection || '')
     fd.append('top_k', form.value.topK)
-    fd.append('hybrid_search', form.value.hybridSearch || 'RRF')
-    fd.append('hybrid_alpha', form.value.hybridAlpha)
     if (form.value.rerank) {
       fd.append('rerank', 'true')
       fd.append('rerank_top_n', form.value.rerankTopN)

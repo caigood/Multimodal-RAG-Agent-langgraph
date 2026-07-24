@@ -2,27 +2,16 @@
 """
 FastAPI Application
 """
-import ssl
-import urllib3
-import requests
-
-ssl._create_default_https_context = ssl._create_unverified_context
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-requests.packages.urllib3.disable_warnings()
-_original_request = requests.Session.request
-def _patched_request(self, method, url, **kwargs):
-    kwargs.setdefault("verify", False)
-    return _original_request(self, method, url, **kwargs)
-requests.Session.request = _patched_request
-
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.logging import setup_logging
 from app.core.config import settings
+from app.core.exceptions import AppError
 from app.api.v1 import router as v1_router
 
 setup_logging(level="DEBUG" if settings.api_reload else "INFO")
@@ -58,6 +47,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(AppError)
+    async def handle_app_error(_request: Request, exc: AppError):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
     app.include_router(v1_router, prefix="/api")
 

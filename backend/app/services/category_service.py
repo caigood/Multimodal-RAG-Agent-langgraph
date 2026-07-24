@@ -74,37 +74,46 @@ def delete_category_file(category_id: str, file_id: str) -> str:
         raise NotFoundError("文件记录不存在")
 
     oss_key = record.get("oss_key")
-    if oss_key:
-        try:
-            get_oss_service().delete_objects([oss_key])
-        except Exception as e:
-            logger.warning("OSS 删除失败（继续）", extra={"oss_key": oss_key, "error": str(e)})
-
+    # 先删除 PG 引用，再基于两张引用表的最终状态决定是否删除 OSS。
     cat_file_repo.delete(file_id)
+    if oss_key:
+        from app.db import get_file_repository
+        refs = cat_file_repo.count_by_oss_key(oss_key) + get_file_repository().count_by_oss_key(oss_key)
+        if refs == 0:
+            try:
+                get_oss_service().delete_objects([oss_key])
+            except Exception as e:
+                logger.warning("OSS 删除失败（继续）", extra={"oss_key": oss_key, "error": str(e)})
+
     return record["file_name"]
 
 
 def batch_delete_category_files(category_id: str, file_ids: list) -> dict:
     cat_file_repo = get_category_file_repository()
-    oss_keys, deleted, not_found = [], [], []
+    records = []
+    deleted, not_found = [], []
     for fid in file_ids:
         record = cat_file_repo.get_by_id(fid)
         if not record or record["category_id"] != category_id:
             not_found.append(fid)
             continue
-        if record.get("oss_key"):
-            oss_keys.append(record["oss_key"])
+        records.append(record)
         deleted.append(record["file_name"])
 
-    if oss_keys:
+    # 先删除全部关系，避免共享 oss_key 在引用仍存在时被误删。
+    for record in records:
+        cat_file_repo.delete(record["id"])
+
+    from app.db import get_file_repository
+    oss_keys = set(r.get("oss_key") for r in records if r.get("oss_key"))
+    unreferenced = [
+        key for key in oss_keys
+        if cat_file_repo.count_by_oss_key(key) + get_file_repository().count_by_oss_key(key) == 0
+    ]
+    if unreferenced:
         try:
-            get_oss_service().delete_objects(oss_keys)
+            get_oss_service().delete_objects(unreferenced)
         except Exception as e:
             logger.warning("OSS 批量删除失败（继续）", extra={"error": str(e)})
-
-    for fid in file_ids:
-        record = cat_file_repo.get_by_id(fid)
-        if record and record["category_id"] == category_id:
-            cat_file_repo.delete(fid)
 
     return {"deleted": deleted, "not_found": not_found}

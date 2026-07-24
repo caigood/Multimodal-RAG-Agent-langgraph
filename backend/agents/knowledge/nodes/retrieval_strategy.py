@@ -16,17 +16,13 @@ def determine_retrieval_strategy(state: KnowledgeAgentState) -> dict:
     start_time = datetime.now()
 
     try:
-        query = state["rewritten_query"]
+        query = state["search_query"]
         _cfg = state.get("config")
 
         # 用户指定了关键词，直接强制 KEYWORD_ONLY，跳过规则判断
         if _cfg and _cfg.keyword_filter:
             logger.info(f"[RetrievalStrategy] 用户指定关键词过滤: '{_cfg.keyword_filter}'，强制 KEYWORD_ONLY")
-            return {
-                "retrieval_strategy": RetrievalStrategy.KEYWORD_ONLY,
-                "retrieval_strategy_reason": f"用户指定关键词: {_cfg.keyword_filter}",
-                "processing_log": [{"stage": "retrieval_strategy", "duration_ms": 0, "strategy": RetrievalStrategy.KEYWORD_ONLY.value, "reason": "user_keyword_filter"}],
-            }
+            return {"retrieval_strategy": RetrievalStrategy.KEYWORD_ONLY}
 
         logger.info(f"[RetrievalStrategy] 开始判断检索策略: {query}")
 
@@ -58,21 +54,11 @@ def determine_retrieval_strategy(state: KnowledgeAgentState) -> dict:
         duration = (datetime.now() - start_time).total_seconds() * 1000
         logger.info(f"[RetrievalStrategy] 策略: {strategy.value} ({duration:.0f}ms) 原因: {reason_str}")
 
-        return {
-            "retrieval_strategy": strategy,
-            "retrieval_strategy_reason": reason_str,
-            "processing_log": [{
-                "stage": "retrieval_strategy",
-                "duration_ms": duration,
-                "strategy": strategy.value,
-                "reason": reason_str,
-            }],
-        }
+        return {"retrieval_strategy": strategy}
 
     except Exception as e:
         logger.error(f"[RetrievalStrategy] 策略判断失败: {e}", exc_info=True)
         return {
             "retrieval_strategy": RetrievalStrategy.HYBRID,
-            "retrieval_strategy_reason": "策略判断失败，默认混合检索",
             "all_warnings": [f"检索策略判断失败: {e}"],
         }

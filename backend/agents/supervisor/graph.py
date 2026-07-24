@@ -17,7 +17,6 @@ Supervisor 智能体图定义
     这是一种标准的 LangGraph Supervisor + Specialized Agents 架构。
 """
 
-import ssl
 import httpx
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -56,13 +55,8 @@ def create_supervisor_agent():
     print("\n[Graph] 开始构建 Supervisor 多智能体系统")
 
     # ================================================================
-    # 1. SSL / HTTP 客户端配置
+    # 1. HTTP 客户端配置
     # ================================================================
-    # 如果配置关闭了 SSL 验证（内网环境或调试场景），
-    # 全局关闭 Python 的 SSL 证书校验，避免 HTTPS 请求报错。
-    if not settings.ssl_verify:
-        ssl._create_default_https_context = ssl._create_unverified_context
-
     # 创建 HTTP 客户端，供所有 ChatOpenAI 实例复用。
     # 复用连接池可以避免反复建立 TCP 连接，提升性能。
     http_client = httpx.Client(

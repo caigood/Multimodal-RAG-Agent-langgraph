@@ -11,28 +11,6 @@ logger = logging.getLogger(__name__)
 
 class RetrievalService:
 
-    def vector_search(
-        self,
-        query: str,
-        top_k: int = 10,
-        filter_expr: Optional[str] = None,
-        collection: Optional[str] = None,
-        ranker: str = "RRF",
-        rrf_k: int = 60,
-    ) -> List[dict]:
-        """Dense + BM25 双路混合检索（主要入口）"""
-        if not collection:
-            logger.warning("[Retrieval] collection 未指定，跳过检索")
-            return []
-        return get_milvus_service().hybrid_search(
-            collection_name=collection,
-            query=query,
-            top_k=top_k,
-            filter_expr=filter_expr,
-            ranker=ranker,
-            rrf_k=rrf_k,
-        )
-
     def keyword_search(
         self,
         query: str,
@@ -40,7 +18,6 @@ class RetrievalService:
         filter_expr: Optional[str] = None,
         collection: Optional[str] = None,
         keyword_filter: Optional[str] = None,
-        ranker: str = "RRF",
         rrf_k: int = 60,
     ) -> List[dict]:
         """TEXT_MATCH 倒排索引预过滤 + Dense + BM25 双路混合检索。"""
@@ -54,7 +31,6 @@ class RetrievalService:
             top_k=top_k,
             filter_expr=filter_expr,
             keyword_filter=kw,
-            ranker=ranker,
             rrf_k=rrf_k,
         )
 
@@ -67,7 +43,6 @@ class RetrievalService:
         group_by_field: Optional[str] = None,
         group_size: int = 1,
         strict_group_size: bool = False,
-        ranker: str = "RRF",
         rrf_k: int = 60,
     ) -> List[dict]:
         """纯双路混合检索，支持分组搜索"""
@@ -82,7 +57,6 @@ class RetrievalService:
             group_by_field=group_by_field,
             group_size=group_size,
             strict_group_size=strict_group_size,
-            ranker=ranker,
             rrf_k=rrf_k,
         )
 
